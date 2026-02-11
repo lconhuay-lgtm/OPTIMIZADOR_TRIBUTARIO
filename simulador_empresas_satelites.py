@@ -7,6 +7,12 @@ import pandas as pd
 from datetime import datetime
 from scipy import stats # Para Pruebas de Hipótesis
 import json
+import tempfile
+import os
+from openpyxl import Workbook
+from openpyxl.drawing.image import Image as XlImage
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 
 
 
@@ -31,6 +37,12 @@ class OptimizadorPro:
                        
         
         self.satelites_entries = []
+        # Almacenar figuras para exportación Excel
+        self.fig_resultados = None
+        self.fig_simulacion = None
+        self.fig_sensibilidad = None
+        self.fig_comparativo = None
+        self.datos_simulacion = None  # Estadísticas Monte Carlo
         self.crear_interfaz()
         
     def crear_interfaz(self):
@@ -832,11 +844,13 @@ permitido en el régimen especial, maximizando el ahorro tributario.
         ax4.grid(axis='y', alpha=0.3)
         
         plt.tight_layout()
-        
+
+        self.fig_resultados = fig  # Guardar para Excel
+
         self.canvas_graficos = FigureCanvasTkAgg(fig, self.frame_graficos_container)
         self.canvas_graficos.draw()
         self.canvas_graficos.get_tk_widget().pack(fill='both', expand=True)
-    
+
 
     def ejecutar_simulacion(self):
         try:
@@ -1010,15 +1024,38 @@ permitido en el régimen especial, maximizando el ahorro tributario.
             ax4.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1000:.0f}K'))
             
             plt.tight_layout()
-            
+
+            self.fig_simulacion = fig  # Guardar para Excel
+            self.datos_simulacion = {
+                'n_sim': n_sim,
+                'variabilidad': variabilidad * 100,
+                'media': np.mean(ahorros),
+                'mediana': np.median(ahorros),
+                'std': np.std(ahorros),
+                'cv': cv,
+                'min': np.min(ahorros),
+                'max': np.max(ahorros),
+                'p5': np.percentile(ahorros, 5),
+                'p25': np.percentile(ahorros, 25),
+                'p75': np.percentile(ahorros, 75),
+                'p95': np.percentile(ahorros, 95),
+                'ic_lower': np.percentile(ahorros, 2.5),
+                'ic_upper': np.percentile(ahorros, 97.5),
+                't_stat': t_stat,
+                'p_value': p_value,
+                'decision': decision,
+                'conf_nivel': conf_val * 100,
+                'alfa': alfa_val
+            }
+
             self.canvas_simulacion = FigureCanvasTkAgg(fig, self.frame_sim_container)
             self.canvas_simulacion.draw()
             self.canvas_simulacion.get_tk_widget().pack(fill='both', expand=True)
-            
-            messagebox.showinfo("Simulación Completa", 
+
+            messagebox.showinfo("Simulación Completa",
                               f"Ahorro esperado: {np.mean(ahorros):,.0f}\n"
                               f"IC 95%: [{np.percentile(ahorros, 2.5):,.0f}, {np.percentile(ahorros, 97.5):,.0f}]")
-            
+
         except Exception as e:
             messagebox.showerror("Error", f"Error en simulación: {str(e)}")
 
@@ -1159,11 +1196,13 @@ permitido en el régimen especial, maximizando el ahorro tributario.
                 ax2.grid(True, alpha=0.3)
             
             plt.tight_layout()
-            
+
+            self.fig_sensibilidad = fig  # Guardar para Excel
+
             self.canvas_sensibilidad = FigureCanvasTkAgg(fig, self.frame_sens_container)
             self.canvas_sensibilidad.draw()
             self.canvas_sensibilidad.get_tk_widget().pack(fill='both', expand=True)
-            
+
         except Exception as e:
             messagebox.showerror("Error", f"Error en sensibilidad: {str(e)}")
 
@@ -1257,46 +1296,577 @@ permitido en el régimen especial, maximizando el ahorro tributario.
                 ax2.text(i, y + 0.3, f'{y:.2f}%', ha='center', fontsize=9, fontweight='bold')
             
             plt.tight_layout()
-            
+
+            self.fig_comparativo = fig  # Guardar para Excel
+            self.datos_comparativo = escenarios  # Guardar datos
+
             self.canvas_comparativo = FigureCanvasTkAgg(fig, self.frame_comp_container)
             self.canvas_comparativo.draw()
             self.canvas_comparativo.get_tk_widget().pack(fill='both', expand=True)
-            
+
         except Exception as e:
             messagebox.showerror("Error", f"Error en comparativo: {str(e)}")
 
         
+    def _estilo_header(self):
+        """Retorna estilos para headers de tabla."""
+        return {
+            'font': Font(name='Calibri', bold=True, color='FFFFFF', size=11),
+            'fill': PatternFill(start_color='1F4E79', end_color='1F4E79', fill_type='solid'),
+            'alignment': Alignment(horizontal='center', vertical='center', wrap_text=True),
+            'border': Border(
+                bottom=Side(style='medium', color='000000'),
+                top=Side(style='medium', color='000000'),
+                left=Side(style='thin', color='000000'),
+                right=Side(style='thin', color='000000')
+            )
+        }
+
+    def _estilo_celda(self, es_alterno=False):
+        """Retorna estilos para celdas de datos."""
+        fill_color = 'D6E4F0' if es_alterno else 'FFFFFF'
+        return {
+            'font': Font(name='Calibri', size=10),
+            'fill': PatternFill(start_color=fill_color, end_color=fill_color, fill_type='solid'),
+            'alignment': Alignment(horizontal='center', vertical='center'),
+            'border': Border(
+                bottom=Side(style='thin', color='C0C0C0'),
+                top=Side(style='thin', color='C0C0C0'),
+                left=Side(style='thin', color='C0C0C0'),
+                right=Side(style='thin', color='C0C0C0')
+            )
+        }
+
+    def _estilo_titulo(self):
+        """Retorna estilos para títulos de sección."""
+        return {
+            'font': Font(name='Calibri', bold=True, color='1F4E79', size=14),
+            'alignment': Alignment(horizontal='left', vertical='center')
+        }
+
+    def _estilo_subtitulo(self):
+        """Retorna estilos para subtítulos."""
+        return {
+            'font': Font(name='Calibri', bold=True, color='2E75B6', size=11),
+            'alignment': Alignment(horizontal='left', vertical='center')
+        }
+
+    def _estilo_kpi_valor(self):
+        """Retorna estilos para valores KPI destacados."""
+        return {
+            'font': Font(name='Calibri', bold=True, color='FFFFFF', size=13),
+            'fill': PatternFill(start_color='2E75B6', end_color='2E75B6', fill_type='solid'),
+            'alignment': Alignment(horizontal='center', vertical='center'),
+            'border': Border(
+                bottom=Side(style='medium', color='1F4E79'),
+                top=Side(style='medium', color='1F4E79'),
+                left=Side(style='medium', color='1F4E79'),
+                right=Side(style='medium', color='1F4E79')
+            )
+        }
+
+    def _estilo_kpi_label(self):
+        """Retorna estilos para etiquetas KPI."""
+        return {
+            'font': Font(name='Calibri', bold=True, color='1F4E79', size=10),
+            'fill': PatternFill(start_color='E8F0FE', end_color='E8F0FE', fill_type='solid'),
+            'alignment': Alignment(horizontal='center', vertical='center', wrap_text=True),
+            'border': Border(
+                bottom=Side(style='thin', color='1F4E79'),
+                top=Side(style='thin', color='1F4E79'),
+                left=Side(style='thin', color='1F4E79'),
+                right=Side(style='thin', color='1F4E79')
+            )
+        }
+
+    def _aplicar_estilo(self, celda, estilo_dict):
+        """Aplica un diccionario de estilos a una celda."""
+        for attr, value in estilo_dict.items():
+            setattr(celda, attr, value)
+
+    def _guardar_figura_temp(self, fig, nombre, tmpdir):
+        """Guarda una figura matplotlib como PNG de alta resolución."""
+        if fig is None:
+            return None
+        path = os.path.join(tmpdir, f"{nombre}.png")
+        fig.savefig(path, dpi=180, bbox_inches='tight', facecolor='white', edgecolor='none')
+        return path
+
+    def _insertar_imagen(self, ws, img_path, celda, ancho_cm=28, alto_cm=16):
+        """Inserta imagen en hoja Excel con tamaño especificado."""
+        if img_path and os.path.exists(img_path):
+            img = XlImage(img_path)
+            img.width = int(ancho_cm * 37.8)   # cm a pixels aprox
+            img.height = int(alto_cm * 37.8)
+            ws.add_image(img, celda)
+
     def exportar_excel(self):
         try:
-            if not hasattr(self, 'resultados'): 
+            if not hasattr(self, 'resultados'):
                 messagebox.showwarning("Atención", "Ejecute el cálculo primero")
                 return
-            
-            path = filedialog.asksaveasfilename(defaultextension=".xlsx", 
-                                               initialfile=f"Reporte_Gerencial_{datetime.now().strftime('%Y%m%d')}.xlsx")
-            if not path: return
+
+            path = filedialog.asksaveasfilename(
+                defaultextension=".xlsx",
+                filetypes=[("Excel files", "*.xlsx")],
+                initialfile=f"Reporte_Gerencial_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+            )
+            if not path:
+                return
 
             r = self.resultados
-            # Hoja de Resumen para el Directorio
-            df_kpi = pd.DataFrame({
-                "INDICADOR ESTRATÉGICO": ["Ahorro Neto Esperado", "Tasa Impositiva Efectiva", "ROI de Optimización", "Nivel de Certeza (P-Value)"],
-                "VALOR": [
-                    f"{r['grupo']['ahorro_tributario']:,.2f}",
-                    f"{(r['grupo']['impuesto_total'] / (r['matriz']['nueva_utilidad'] + r['grupo']['total_utilidad_satelites']) * 100):.2f}%",
-                    f"{(r['grupo']['ahorro_tributario'] / r['matriz']['total_compras'] * 100):.2f}%",
-                    "99.9% (Validado estadísticamente)"
-                ]
-            })
+            utilidad_total = r['matriz']['nueva_utilidad'] + r['grupo']['total_utilidad_satelites']
+            tasa_efectiva = (r['grupo']['impuesto_total'] / utilidad_total * 100) if utilidad_total > 0 else 0
+            roi = (r['grupo']['ahorro_tributario'] / r['matriz']['total_compras'] * 100) if r['matriz']['total_compras'] > 0 else 0
 
-            df_det = pd.DataFrame(r['satelites'])
-            
-            with pd.ExcelWriter(path, engine='openpyxl') as writer:
-                df_kpi.to_excel(writer, sheet_name='RESUMEN EJECUTIVO', index=False)
-                df_det.to_excel(writer, sheet_name='DETALLE TÉCNICO', index=False)
-                
-            messagebox.showinfo("Éxito", "Reporte Gerencial exportado correctamente para la presentación.")
+            wb = Workbook()
+
+            # Directorio temporal para imágenes
+            with tempfile.TemporaryDirectory() as tmpdir:
+                # Guardar todas las figuras disponibles
+                img_resultados = self._guardar_figura_temp(self.fig_resultados, 'resultados', tmpdir)
+                img_simulacion = self._guardar_figura_temp(self.fig_simulacion, 'simulacion', tmpdir)
+                img_sensibilidad = self._guardar_figura_temp(self.fig_sensibilidad, 'sensibilidad', tmpdir)
+                img_comparativo = self._guardar_figura_temp(self.fig_comparativo, 'comparativo', tmpdir)
+
+                # ========================================================
+                # HOJA 1: RESUMEN EJECUTIVO
+                # ========================================================
+                ws1 = wb.active
+                ws1.title = "RESUMEN EJECUTIVO"
+                ws1.sheet_properties.tabColor = "1F4E79"
+
+                # Título principal
+                ws1.merge_cells('B2:H2')
+                c = ws1['B2']
+                c.value = "REPORTE DE OPTIMIZACION TRIBUTARIA - PRESENTACION GERENCIAL"
+                self._aplicar_estilo(c, {
+                    'font': Font(name='Calibri', bold=True, color='1F4E79', size=18),
+                    'alignment': Alignment(horizontal='center', vertical='center')
+                })
+                ws1.row_dimensions[2].height = 40
+
+                # Subtítulo
+                ws1.merge_cells('B3:H3')
+                c = ws1['B3']
+                c.value = f"Grupo {r['matriz']['nombre']} | Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+                self._aplicar_estilo(c, {
+                    'font': Font(name='Calibri', italic=True, color='666666', size=11),
+                    'alignment': Alignment(horizontal='center', vertical='center')
+                })
+
+                # Línea separadora
+                for col in range(2, 9):
+                    c = ws1.cell(row=4, column=col)
+                    c.fill = PatternFill(start_color='1F4E79', end_color='1F4E79', fill_type='solid')
+                ws1.row_dimensions[4].height = 4
+
+                # KPIs principales (fila 6-7)
+                kpis = [
+                    ("AHORRO TRIBUTARIO", f"S/ {r['grupo']['ahorro_tributario']:,.0f}"),
+                    ("AHORRO %", f"{r['grupo']['ahorro_porcentual']:.1f}%"),
+                    ("TASA EFECTIVA", f"{tasa_efectiva:.1f}%"),
+                    ("ROI ESTRUCTURA", f"{roi:.1f}%"),
+                ]
+
+                col_start = 2
+                for i, (label, valor) in enumerate(kpis):
+                    col = col_start + (i * 2)
+                    # Label
+                    c = ws1.cell(row=6, column=col)
+                    c.value = label
+                    self._aplicar_estilo(c, self._estilo_kpi_label())
+                    ws1.merge_cells(start_row=6, start_column=col, end_row=6, end_column=col)
+                    ws1.column_dimensions[get_column_letter(col)].width = 22
+                    # Valor
+                    c = ws1.cell(row=7, column=col)
+                    c.value = valor
+                    self._aplicar_estilo(c, self._estilo_kpi_valor())
+                ws1.row_dimensions[6].height = 30
+                ws1.row_dimensions[7].height = 35
+
+                # Sección: Escenario Sin Estructura
+                fila = 9
+                ws1.merge_cells(f'B{fila}:E{fila}')
+                c = ws1[f'B{fila}']
+                c.value = "ESCENARIO SIN ESTRUCTURA SATELITAL"
+                self._aplicar_estilo(c, self._estilo_subtitulo())
+                fila += 1
+
+                datos_sin = [
+                    ("Ingresos Totales", f"S/ {r['matriz']['ingresos']:,.2f}"),
+                    ("Costos Externos", f"S/ {r['matriz']['costos_externos']:,.2f}"),
+                    ("Utilidad Gravable", f"S/ {r['matriz']['utilidad_sin_estructura']:,.2f}"),
+                    ("Impuesto (29.5%)", f"S/ {r['matriz']['impuesto_sin_estructura']:,.2f}"),
+                ]
+                for j, (lab, val) in enumerate(datos_sin):
+                    c = ws1.cell(row=fila + j, column=2)
+                    c.value = lab
+                    self._aplicar_estilo(c, self._estilo_celda(j % 2 == 0))
+                    c.alignment = Alignment(horizontal='left')
+                    c = ws1.cell(row=fila + j, column=4)
+                    c.value = val
+                    self._aplicar_estilo(c, self._estilo_celda(j % 2 == 0))
+
+                # Sección: Con Estructura
+                fila += len(datos_sin) + 1
+                ws1.merge_cells(f'B{fila}:E{fila}')
+                c = ws1[f'B{fila}']
+                c.value = "ESCENARIO CON ESTRUCTURA OPTIMIZADA"
+                self._aplicar_estilo(c, self._estilo_subtitulo())
+                fila += 1
+
+                datos_con = [
+                    ("Impuesto Matriz (con estructura)", f"S/ {r['matriz']['impuesto_con_estructura']:,.2f}"),
+                    ("Impuesto Total Satélites", f"S/ {r['grupo']['total_impuesto_satelites']:,.2f}"),
+                    ("Impuesto Total Grupo", f"S/ {r['grupo']['impuesto_total']:,.2f}"),
+                    ("AHORRO NETO", f"S/ {r['grupo']['ahorro_tributario']:,.2f}"),
+                ]
+                for j, (lab, val) in enumerate(datos_con):
+                    c = ws1.cell(row=fila + j, column=2)
+                    c.value = lab
+                    self._aplicar_estilo(c, self._estilo_celda(j % 2 == 0))
+                    c.alignment = Alignment(horizontal='left')
+                    c = ws1.cell(row=fila + j, column=4)
+                    c.value = val
+                    self._aplicar_estilo(c, self._estilo_celda(j % 2 == 0))
+                    if j == len(datos_con) - 1:
+                        # Resaltar ahorro neto
+                        ws1.cell(row=fila + j, column=2).font = Font(name='Calibri', bold=True, color='006600', size=11)
+                        ws1.cell(row=fila + j, column=4).font = Font(name='Calibri', bold=True, color='006600', size=11)
+
+                # ========================================================
+                # HOJA 2: DETALLE SATELITES
+                # ========================================================
+                ws2 = wb.create_sheet("DETALLE SATELITES")
+                ws2.sheet_properties.tabColor = "2E75B6"
+
+                ws2.merge_cells('B2:L2')
+                c = ws2['B2']
+                c.value = "DETALLE POR EMPRESA SATELITE"
+                self._aplicar_estilo(c, self._estilo_titulo())
+                ws2.row_dimensions[2].height = 30
+
+                # Headers
+                headers = ["N", "Empresa", "Tipo", "Regimen", "Costos", "Gastos Op.",
+                           "Margen %", "Precio Venta", "Utilidad Neta", "Impuesto",
+                           "Ahorro Ind.", "Tasa Efect."]
+                for j, h in enumerate(headers, 2):
+                    c = ws2.cell(row=4, column=j)
+                    c.value = h
+                    self._aplicar_estilo(c, self._estilo_header())
+                ws2.row_dimensions[4].height = 28
+
+                # Datos
+                for i, sat in enumerate(r['satelites']):
+                    fila = 5 + i
+                    alt = i % 2 == 0
+                    datos_fila = [
+                        i + 1,
+                        sat['nombre'],
+                        sat['tipo'],
+                        sat['regimen'],
+                        sat['costo'],
+                        sat['gastos_operativos'],
+                        sat['margen_optimo'],
+                        sat['precio_venta'],
+                        sat['utilidad_neta'],
+                        sat['impuesto'],
+                        sat['ahorro_individual'],
+                        sat['tasa_efectiva']
+                    ]
+                    for j, val in enumerate(datos_fila, 2):
+                        c = ws2.cell(row=fila, column=j)
+                        if isinstance(val, (int, float)) and j >= 6:
+                            if j == 8:  # Margen %
+                                c.value = val
+                                c.number_format = '0.00"%"'
+                            elif j == 13:  # Tasa efectiva
+                                c.value = val
+                                c.number_format = '0.00"%"'
+                            else:
+                                c.value = val
+                                c.number_format = '#,##0.00'
+                        else:
+                            c.value = val
+                        self._aplicar_estilo(c, self._estilo_celda(alt))
+
+                # Totales
+                fila_total = 5 + len(r['satelites'])
+                ws2.cell(row=fila_total, column=2).value = "TOTAL"
+                ws2.cell(row=fila_total, column=2).font = Font(bold=True, size=11, color='1F4E79')
+                for col_idx, val in [
+                    (6, sum(s['costo'] for s in r['satelites'])),
+                    (7, sum(s['gastos_operativos'] for s in r['satelites'])),
+                    (10, sum(s['utilidad_neta'] for s in r['satelites'])),
+                    (11, sum(s['impuesto'] for s in r['satelites'])),
+                    (12, sum(s['ahorro_individual'] for s in r['satelites']))
+                ]:
+                    c = ws2.cell(row=fila_total, column=col_idx)
+                    c.value = val
+                    c.number_format = '#,##0.00'
+                    c.font = Font(bold=True, size=10, color='1F4E79')
+                    c.fill = PatternFill(start_color='E8F0FE', end_color='E8F0FE', fill_type='solid')
+
+                # Ajustar anchos
+                anchos = [4, 16, 12, 26, 14, 14, 10, 16, 14, 14, 14, 12]
+                for j, w in enumerate(anchos, 2):
+                    ws2.column_dimensions[get_column_letter(j)].width = w
+
+                # ========================================================
+                # HOJA 3: GRAFICOS RESULTADOS
+                # ========================================================
+                ws3 = wb.create_sheet("GRAFICOS RESULTADOS")
+                ws3.sheet_properties.tabColor = "2ECC71"
+
+                ws3.merge_cells('B2:H2')
+                c = ws3['B2']
+                c.value = "VISUALIZACION ESTRATEGICA - ANALISIS TRIBUTARIO"
+                self._aplicar_estilo(c, self._estilo_titulo())
+
+                if img_resultados:
+                    self._insertar_imagen(ws3, img_resultados, 'B4', ancho_cm=36, alto_cm=22)
+                else:
+                    ws3['B4'] = "Ejecute 'Calcular Margenes Optimos' para generar los graficos."
+                    ws3['B4'].font = Font(italic=True, color='999999', size=11)
+
+                # ========================================================
+                # HOJA 4: SIMULACION MONTE CARLO
+                # ========================================================
+                ws4 = wb.create_sheet("SIMULACION MONTE CARLO")
+                ws4.sheet_properties.tabColor = "E74C3C"
+
+                ws4.merge_cells('B2:H2')
+                c = ws4['B2']
+                c.value = "SIMULACION MONTE CARLO - ANALISIS DE RIESGO"
+                self._aplicar_estilo(c, self._estilo_titulo())
+
+                if self.datos_simulacion:
+                    ds = self.datos_simulacion
+
+                    # Tabla de estadísticas
+                    ws4.merge_cells('B4:C4')
+                    c = ws4['B4']
+                    c.value = "ESTADISTICAS DE SIMULACION"
+                    self._aplicar_estilo(c, self._estilo_subtitulo())
+
+                    stats_data = [
+                        ("Iteraciones", f"{ds['n_sim']:,}"),
+                        ("Variabilidad", f"+/-{ds['variabilidad']:.1f}%"),
+                        ("Ahorro Medio", f"S/ {ds['media']:,.0f}"),
+                        ("Mediana", f"S/ {ds['mediana']:,.0f}"),
+                        ("Desv. Estandar", f"S/ {ds['std']:,.0f}"),
+                        ("Coef. Variacion", f"{ds['cv']:.2f}%"),
+                        ("Minimo", f"S/ {ds['min']:,.0f}"),
+                        ("Maximo", f"S/ {ds['max']:,.0f}"),
+                        ("Percentil 5", f"S/ {ds['p5']:,.0f}"),
+                        ("Percentil 25", f"S/ {ds['p25']:,.0f}"),
+                        ("Percentil 75", f"S/ {ds['p75']:,.0f}"),
+                        ("Percentil 95", f"S/ {ds['p95']:,.0f}"),
+                        ("IC 95% Inferior", f"S/ {ds['ic_lower']:,.0f}"),
+                        ("IC 95% Superior", f"S/ {ds['ic_upper']:,.0f}"),
+                    ]
+                    for i, (lab, val) in enumerate(stats_data):
+                        fila = 5 + i
+                        c = ws4.cell(row=fila, column=2)
+                        c.value = lab
+                        self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+                        c.alignment = Alignment(horizontal='left')
+                        c = ws4.cell(row=fila, column=3)
+                        c.value = val
+                        self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+                    ws4.column_dimensions['B'].width = 20
+                    ws4.column_dimensions['C'].width = 22
+
+                    # Prueba de hipótesis
+                    fila_h = 5 + len(stats_data) + 1
+                    ws4.merge_cells(f'B{fila_h}:C{fila_h}')
+                    c = ws4[f'B{fila_h}']
+                    c.value = "PRUEBA DE HIPOTESIS"
+                    self._aplicar_estilo(c, self._estilo_subtitulo())
+
+                    hipotesis_data = [
+                        ("H0", "Ahorro medio = 0"),
+                        ("H1", "Ahorro medio > 0"),
+                        ("Estadistico t", f"{ds['t_stat']:.4f}"),
+                        ("P-Valor", f"{ds['p_value']:.2e}"),
+                        ("Alfa", f"{ds['alfa']}"),
+                        ("Nivel Confianza", f"{ds['conf_nivel']:.1f}%"),
+                        ("DECISION", ds['decision']),
+                    ]
+                    for i, (lab, val) in enumerate(hipotesis_data):
+                        f = fila_h + 1 + i
+                        c = ws4.cell(row=f, column=2)
+                        c.value = lab
+                        self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+                        c.alignment = Alignment(horizontal='left')
+                        c = ws4.cell(row=f, column=3)
+                        c.value = val
+                        self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+                        if lab == "DECISION":
+                            c.font = Font(name='Calibri', bold=True, color='006600', size=11)
+
+                    # Gráfico
+                    if img_simulacion:
+                        self._insertar_imagen(ws4, img_simulacion, 'E4', ancho_cm=36, alto_cm=22)
+                else:
+                    ws4['B4'] = "Ejecute la Simulacion Monte Carlo para generar datos y graficos."
+                    ws4['B4'].font = Font(italic=True, color='999999', size=11)
+
+                # ========================================================
+                # HOJA 5: ANALISIS SENSIBILIDAD
+                # ========================================================
+                ws5 = wb.create_sheet("SENSIBILIDAD")
+                ws5.sheet_properties.tabColor = "F39C12"
+
+                ws5.merge_cells('B2:H2')
+                c = ws5['B2']
+                c.value = "ANALISIS DE SENSIBILIDAD"
+                self._aplicar_estilo(c, self._estilo_titulo())
+
+                ws5.merge_cells('B4:H4')
+                c = ws5['B4']
+                c.value = "Impacto de variaciones en parametros clave sobre el ahorro tributario"
+                self._aplicar_estilo(c, {
+                    'font': Font(name='Calibri', italic=True, color='666666', size=10),
+                    'alignment': Alignment(horizontal='left')
+                })
+
+                if img_sensibilidad:
+                    self._insertar_imagen(ws5, img_sensibilidad, 'B6', ancho_cm=36, alto_cm=16)
+                else:
+                    ws5['B6'] = "Ejecute el Analisis de Sensibilidad para generar graficos."
+                    ws5['B6'].font = Font(italic=True, color='999999', size=11)
+
+                # ========================================================
+                # HOJA 6: ANALISIS COMPARATIVO
+                # ========================================================
+                ws6 = wb.create_sheet("COMPARATIVO")
+                ws6.sheet_properties.tabColor = "9B59B6"
+
+                ws6.merge_cells('B2:H2')
+                c = ws6['B2']
+                c.value = "ANALISIS COMPARATIVO MULTI-ESCENARIO"
+                self._aplicar_estilo(c, self._estilo_titulo())
+
+                if hasattr(self, 'datos_comparativo') and self.datos_comparativo:
+                    # Tabla comparativa
+                    headers_comp = ["Escenario", "Ahorro Tributario", "Tasa Efectiva %", "N Satelites"]
+                    for j, h in enumerate(headers_comp, 2):
+                        c = ws6.cell(row=4, column=j)
+                        c.value = h
+                        self._aplicar_estilo(c, self._estilo_header())
+                    ws6.row_dimensions[4].height = 28
+                    ws6.column_dimensions['B'].width = 20
+                    ws6.column_dimensions['C'].width = 22
+                    ws6.column_dimensions['D'].width = 18
+                    ws6.column_dimensions['E'].width = 14
+
+                    for i, esc in enumerate(self.datos_comparativo):
+                        fila = 5 + i
+                        alt = i % 2 == 0
+                        vals = [
+                            esc['nombre'],
+                            esc['ahorro'],
+                            esc['tasa_efectiva'],
+                            esc['satelites']
+                        ]
+                        for j, val in enumerate(vals, 2):
+                            c = ws6.cell(row=fila, column=j)
+                            if j == 3:
+                                c.value = val
+                                c.number_format = '#,##0.00'
+                            elif j == 4:
+                                c.value = val
+                                c.number_format = '0.00"%"'
+                            else:
+                                c.value = val
+                            self._aplicar_estilo(c, self._estilo_celda(alt))
+
+                if img_comparativo:
+                    fila_img = 5 + (len(self.datos_comparativo) if hasattr(self, 'datos_comparativo') and self.datos_comparativo else 0) + 2
+                    self._insertar_imagen(ws6, img_comparativo, f'B{fila_img}', ancho_cm=36, alto_cm=16)
+                else:
+                    ws6['B10'] = "Ejecute el Analisis Comparativo para generar graficos."
+                    ws6['B10'].font = Font(italic=True, color='999999', size=11)
+
+                # ========================================================
+                # HOJA 7: PARAMETROS
+                # ========================================================
+                ws7 = wb.create_sheet("PARAMETROS")
+                ws7.sheet_properties.tabColor = "95A5A6"
+
+                ws7.merge_cells('B2:D2')
+                c = ws7['B2']
+                c.value = "PARAMETROS TRIBUTARIOS UTILIZADOS"
+                self._aplicar_estilo(c, self._estilo_titulo())
+
+                params = [
+                    ("UIT", f"S/ {r['parametros']['uit']:,.2f}"),
+                    ("Tasa Regimen General", f"{r['parametros']['tasa_general']:.2f}%"),
+                    ("Tasa Regimen Especial", f"{r['parametros']['tasa_especial']:.2f}%"),
+                    ("Diferencial de Tasas", f"{r['parametros']['tasa_general'] - r['parametros']['tasa_especial']:.2f} pp"),
+                    ("Limite Utilidad Especial", f"S/ {r['parametros']['limite_utilidad']:,.2f}"),
+                    ("Limite Ingresos Especial", f"S/ {r['parametros']['limite_ingresos']:,.2f}"),
+                    ("N Empresas Satelites", f"{len(r['satelites'])}"),
+                    ("Empresa Matriz", r['matriz']['nombre']),
+                ]
+
+                headers_p = ["Parametro", "Valor"]
+                for j, h in enumerate(headers_p, 2):
+                    c = ws7.cell(row=4, column=j)
+                    c.value = h
+                    self._aplicar_estilo(c, self._estilo_header())
+                ws7.column_dimensions['B'].width = 30
+                ws7.column_dimensions['C'].width = 25
+
+                for i, (lab, val) in enumerate(params):
+                    fila = 5 + i
+                    c = ws7.cell(row=fila, column=2)
+                    c.value = lab
+                    self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+                    c.alignment = Alignment(horizontal='left')
+                    c = ws7.cell(row=fila, column=3)
+                    c.value = val
+                    self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+
+                # Fórmula
+                fila_f = 5 + len(params) + 2
+                ws7.merge_cells(f'B{fila_f}:D{fila_f}')
+                c = ws7[f'B{fila_f}']
+                c.value = "FORMULA APLICADA"
+                self._aplicar_estilo(c, self._estilo_subtitulo())
+
+                ws7.merge_cells(f'B{fila_f+1}:D{fila_f+1}')
+                c = ws7[f'B{fila_f+1}']
+                c.value = "m* = (Limite_Utilidad + Gastos_Operativos) / Costos"
+                c.font = Font(name='Consolas', size=12, bold=True, color='1F4E79')
+
+                ws7.merge_cells(f'B{fila_f+3}:D{fila_f+3}')
+                c = ws7[f'B{fila_f+3}']
+                c.value = ("Esta formula garantiza que la utilidad neta (despues de gastos) alcance "
+                          "exactamente el limite permitido en el regimen especial, maximizando el ahorro tributario.")
+                c.font = Font(name='Calibri', italic=True, color='666666', size=9)
+                c.alignment = Alignment(wrap_text=True)
+
+                # Guardar
+                wb.save(path)
+
+            messagebox.showinfo(
+                "Exportacion Completa",
+                f"Reporte Gerencial exportado exitosamente.\n\n"
+                f"Hojas generadas:\n"
+                f"  1. Resumen Ejecutivo\n"
+                f"  2. Detalle Satelites\n"
+                f"  3. Graficos Resultados{'  [OK]' if img_resultados else '  [Pendiente]'}\n"
+                f"  4. Simulacion Monte Carlo{'  [OK]' if img_simulacion else '  [Pendiente]'}\n"
+                f"  5. Sensibilidad{'  [OK]' if img_sensibilidad else '  [Pendiente]'}\n"
+                f"  6. Comparativo{'  [OK]' if img_comparativo else '  [Pendiente]'}\n"
+                f"  7. Parametros\n\n"
+                f"Archivo: {path}"
+            )
         except Exception as e:
-            messagebox.showerror("Error de Exportación", f"No se pudo generar el Excel: {str(e)}")
+            messagebox.showerror("Error de Exportacion", f"No se pudo generar el Excel:\n{str(e)}")
     
     def copiar_resultados(self):
         try:
