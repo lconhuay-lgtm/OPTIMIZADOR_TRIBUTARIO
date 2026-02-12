@@ -59,6 +59,7 @@ class OptimizadorPro:
         self.datos_pagos_cuenta = None
         self.fig_equilibrio_sim = None
         self.datos_equilibrio_sim = None
+        self.datos_sensibilidad_nsats = None
         self.crear_interfaz()
         
     def crear_interfaz(self):
@@ -422,8 +423,9 @@ class OptimizadorPro:
         frame_config.pack(fill='x', padx=10, pady=10)
         
         ttk.Label(frame_config, text="Variable:").grid(row=0, column=0, sticky='w', pady=5)
-        self.combo_variable = ttk.Combobox(frame_config, 
-                                          values=["Costos Satélites", "Tasa Régimen Especial", "Límite Utilidad"],
+        self.combo_variable = ttk.Combobox(frame_config,
+                                          values=["Costos Satélites", "Tasa Régimen Especial",
+                                                  "Límite Utilidad", "Número de Satélites"],
                                           state='readonly', width=25)
         self.combo_variable.grid(row=0, column=1, pady=5)
         self.combo_variable.current(0)
@@ -1211,12 +1213,12 @@ permitido en el régimen especial, maximizando el ahorro tributario.
             if self.canvas_simulacion:
                 self.canvas_simulacion.get_tk_widget().destroy()
 
-            fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(14, 10))
+            fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
             fig.suptitle(f'Simulacion Monte Carlo ({n_sim:,} iter.) - Analisis de Riesgo',
-                         fontsize=14, fontweight='bold')
+                         fontsize=13, fontweight='bold', y=0.98)
 
             # [1] Histograma + curva Log-Normal ajustada
-            ax1.hist(ahorros, bins=60, color='#3498db', alpha=0.6, edgecolor='black',
+            ax1.hist(ahorros, bins=60, color='#3498db', alpha=0.7, edgecolor='white',
                      density=True, label='Datos simulados')
             if ln_ajustado:
                 x_ln = np.linspace(max(0.01, ahorros.min()), ahorros.max(), 300)
@@ -1230,11 +1232,12 @@ permitido en el régimen especial, maximizando el ahorro tributario.
             ax1.fill_betweenx([0, ax1.get_ylim()[1] if ax1.get_ylim()[1] > 0 else 0.001],
                               ic_boot_lower, ic_boot_upper, alpha=0.15, color='red',
                               label=f'IC {conf_val*100:.0f}% Boot')
-            ax1.set_xlabel('Ahorro Tributario (S/)', fontsize=10)
-            ax1.set_ylabel('Densidad', fontsize=10)
-            ax1.set_title('Histograma + Ajuste Log-Normal', fontsize=11, fontweight='bold')
-            ax1.legend(fontsize=7, loc='upper right')
+            ax1.set_xlabel('Ahorro Tributario (S/)', fontsize=9)
+            ax1.set_ylabel('Densidad', fontsize=9)
+            ax1.set_title('Histograma + Ajuste Log-Normal', fontsize=10, fontweight='bold')
+            ax1.legend(fontsize=6.5, loc='upper right')
             ax1.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1000:.0f}K'))
+            ax1.tick_params(labelsize=8)
             ax1.grid(alpha=0.3)
 
             # [2] Q-Q Plot (Log-Normal)
@@ -1250,21 +1253,22 @@ permitido en el régimen especial, maximizando el ahorro tributario.
                 lim_max = max(teoricos.max(), ahorros_sorted.max())
                 ax2.plot([lim_min, lim_max], [lim_min, lim_max], 'r--', linewidth=1.5,
                          label='Linea 45')
-                ax2.set_xlabel('Cuantiles Teoricos (Log-Normal)', fontsize=10)
-                ax2.set_ylabel('Cuantiles Observados', fontsize=10)
-                ax2.set_title('Q-Q Plot Log-Normal', fontsize=11, fontweight='bold')
-                ax2.legend(fontsize=8)
+                ax2.set_xlabel('Cuantiles Teoricos (Log-Normal)', fontsize=9)
+                ax2.set_ylabel('Cuantiles Observados', fontsize=9)
+                ax2.set_title('Q-Q Plot Log-Normal', fontsize=10, fontweight='bold')
+                ax2.legend(fontsize=7)
             else:
                 sorted_ahorros = np.sort(ahorros)
                 cumulative = np.arange(1, len(sorted_ahorros) + 1) / len(sorted_ahorros)
                 ax2.plot(sorted_ahorros, cumulative * 100, color='#9b59b6', linewidth=2)
                 ax2.axhline(50, color='red', linestyle='--', alpha=0.5, label='Mediana')
                 ax2.axhline(95, color='green', linestyle='--', alpha=0.5, label='P95')
-                ax2.set_xlabel('Ahorro Tributario', fontsize=10)
-                ax2.set_ylabel('Prob. Acumulada (%)', fontsize=10)
-                ax2.set_title('CDF (sin ajuste Log-Normal)', fontsize=11, fontweight='bold')
-                ax2.legend(fontsize=8)
+                ax2.set_xlabel('Ahorro Tributario', fontsize=9)
+                ax2.set_ylabel('Prob. Acumulada (%)', fontsize=9)
+                ax2.set_title('CDF (sin ajuste Log-Normal)', fontsize=10, fontweight='bold')
+                ax2.legend(fontsize=7)
             ax2.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1000:.0f}K'))
+            ax2.tick_params(labelsize=8)
             ax2.grid(alpha=0.3)
 
             # [3] Violin + Boxplot
@@ -1279,11 +1283,12 @@ permitido en el régimen especial, maximizando el ahorro tributario.
                              showfliers=False)
             bp['boxes'][0].set_facecolor('#2ecc71')
             bp['boxes'][0].set_alpha(0.6)
-            ax3.set_ylabel('Ahorro Tributario (S/)', fontsize=10)
-            ax3.set_title('Violin + Box Plot', fontsize=11, fontweight='bold')
+            ax3.set_ylabel('Ahorro Tributario (S/)', fontsize=9)
+            ax3.set_title('Violin + Box Plot', fontsize=10, fontweight='bold')
             ax3.set_xticks([1])
             ax3.set_xticklabels(['Ahorro'])
             ax3.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1000:.0f}K'))
+            ax3.tick_params(labelsize=8)
             ax3.grid(axis='y', alpha=0.3)
 
             # [4] Panel de estadisticos
@@ -1332,10 +1337,11 @@ LOG-NORMAL FIT:
 
             ax4.axis('off')
             ax4.text(0.05, 0.95, stats_text, transform=ax4.transAxes,
-                     fontsize=7.5, verticalalignment='top', fontfamily='monospace',
+                     fontsize=7, verticalalignment='top', fontfamily='monospace',
                      bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
 
-            plt.tight_layout()
+            plt.subplots_adjust(left=0.08, right=0.95, top=0.93, bottom=0.08,
+                                hspace=0.35, wspace=0.30)
 
             self.fig_simulacion = fig
             self.datos_simulacion = {
@@ -1558,7 +1564,7 @@ LOG-NORMAL FIT:
                 ax2.grid(True, alpha=0.3)
                 ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1000:.0f}K'))
 
-            else:  # Límite Utilidad
+            elif variable == "Límite Utilidad":
                 limite_base = self.resultados['parametros']['limite_utilidad'] / uit
                 rango_abs = limite_base * rango
                 limites_uit = np.linspace(max(1, limite_base - rango_abs), limite_base + rango_abs, 50)
@@ -1572,12 +1578,12 @@ LOG-NORMAL FIT:
                     ahorros_totales.append(ahorro)
 
                 ax1.plot(limites_uit, ahorros_totales, color='#1abc9c', linewidth=2.5, marker='o', markersize=3)
-                ax1.axvline(limite_base, color='red', linestyle='--', alpha=0.5, label=f'Límite Actual ({limite_base:.1f} UIT)')
+                ax1.axvline(limite_base, color='red', linestyle='--', alpha=0.5, label=f'Limite Actual ({limite_base:.1f} UIT)')
                 ax1.axhline(ahorro_base, color='green', linestyle='--',
                            alpha=0.5, label=f'Ahorro Base ({ahorro_base:,.0f})')
-                ax1.set_xlabel('Límite Utilidad (UIT)', fontsize=11)
+                ax1.set_xlabel('Limite Utilidad (UIT)', fontsize=11)
                 ax1.set_ylabel('Ahorro Tributario', fontsize=11)
-                ax1.set_title('Sensibilidad a Límite', fontsize=13, fontweight='bold')
+                ax1.set_title('Sensibilidad a Limite', fontsize=13, fontweight='bold')
                 ax1.grid(True, alpha=0.3)
                 ax1.legend()
                 ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1e6:.2f}M' if x >= 1e6 else f'{x/1000:.0f}K'))
@@ -1588,12 +1594,107 @@ LOG-NORMAL FIT:
                 ax2.plot(limites_uit, ahorro_marginal, color='#f39c12', linewidth=2.5)
                 ax2.axvline(limite_base, color='red', linestyle='--', alpha=0.5)
                 ax2.axhline(0, color='black', linestyle='-', alpha=0.3)
-                ax2.set_xlabel('Límite Utilidad (UIT)', fontsize=11)
+                ax2.set_xlabel('Limite Utilidad (UIT)', fontsize=11)
                 ax2.set_ylabel('Ahorro Marginal por UIT', fontsize=11)
                 ax2.set_title('Beneficio Marginal', fontsize=13, fontweight='bold')
                 ax2.grid(True, alpha=0.3)
                 ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1000:.0f}K'))
-            
+
+            else:  # Numero de Satelites
+                # Satelite de referencia: promedio de los satelites NO generales, operando al limite
+                sats_especial = [s for s in sats_base if not s['es_general']]
+                if sats_especial:
+                    costo_ref = np.mean([s['costo'] for s in sats_especial])
+                    gastos_ref = np.mean([s['gastos'] for s in sats_especial])
+                else:
+                    costo_ref = np.mean([s['costo'] for s in sats_base])
+                    gastos_ref = np.mean([s['gastos'] for s in sats_base])
+
+                n_actual = len(sats_base)
+                n_max = max(n_actual * 3, 15)
+                ns = list(range(1, n_max + 1))
+                ahorros_n = []
+                tasa_efectiva_n = []
+                ir_grupo_n = []
+
+                for n in ns:
+                    sats_n = [{'costo': costo_ref, 'gastos': gastos_ref, 'es_general': False}] * n
+                    ahorro_n = self._calcular_ahorro_grupo(
+                        sats_n, tasa_gral, tasa_esp,
+                        limite_util, limite_ing, util_sin_estructura
+                    )
+                    ahorros_n.append(ahorro_n)
+
+                    # Calcular tasa efectiva para cada N
+                    total_imp_sat = 0
+                    total_compras = 0
+                    total_costos_s = 0
+                    for s in sats_n:
+                        margen_s = (limite_util + s['gastos']) / s['costo']
+                        precio_s = s['costo'] * (1 + margen_s)
+                        if precio_s > limite_ing:
+                            margen_s = (limite_ing / s['costo']) - 1
+                            precio_s = s['costo'] * (1 + margen_s)
+                        util_s = max(0, s['costo'] * margen_s - s['gastos'])
+                        if util_s <= limite_util:
+                            imp_s = util_s * tasa_esp
+                        else:
+                            imp_s = limite_util * tasa_esp + (util_s - limite_util) * tasa_gral
+                        total_imp_sat += imp_s
+                        total_compras += precio_s
+                        total_costos_s += s['costo']
+
+                    util_matriz = util_sin_estructura - total_compras + total_costos_s
+                    imp_matriz = max(0, util_matriz) * tasa_gral
+                    imp_total = imp_matriz + total_imp_sat
+                    util_total = max(0, util_matriz) + sum(
+                        max(0, s['costo'] * ((limite_util + s['gastos']) / s['costo']) - s['gastos'])
+                        for s in sats_n
+                    )
+                    tasa_ef = (imp_total / util_total * 100) if util_total > 0 else 0
+                    tasa_efectiva_n.append(tasa_ef)
+                    ir_grupo_n.append(imp_total)
+
+                # Guardar datos para exportacion Excel
+                self.datos_sensibilidad_nsats = {
+                    'ns': ns,
+                    'ahorros': ahorros_n,
+                    'tasa_efectiva': tasa_efectiva_n,
+                    'ir_grupo': ir_grupo_n,
+                    'n_actual': n_actual,
+                    'costo_ref': costo_ref,
+                    'gastos_ref': gastos_ref,
+                    'ahorro_base': ahorro_base,
+                }
+
+                # Grafico 1: Ahorro vs N satelites
+                ax1.plot(ns, ahorros_n, color='#8E44AD', linewidth=2.5, marker='o', markersize=4)
+                ax1.axvline(n_actual, color='red', linestyle='--', linewidth=2,
+                           label=f'N Actual ({n_actual})')
+                ax1.axhline(ahorro_base, color='green', linestyle='--',
+                           alpha=0.5, label=f'Ahorro Base ({ahorro_base:,.0f})')
+                ax1.fill_between(ns, ahorros_n, alpha=0.1, color='#8E44AD')
+                ax1.set_xlabel('Numero de Satelites', fontsize=11)
+                ax1.set_ylabel('Ahorro Tributario (S/)', fontsize=11)
+                ax1.set_title('Ahorro Fiscal vs N Satelites', fontsize=13, fontweight='bold')
+                ax1.grid(True, alpha=0.3)
+                ax1.legend(fontsize=9)
+                ax1.yaxis.set_major_formatter(plt.FuncFormatter(
+                    lambda x, p: f'{x/1e6:.2f}M' if abs(x) >= 1e6 else f'{x/1000:.0f}K'))
+
+                # Grafico 2: Tasa efectiva vs N satelites
+                ax2.plot(ns, tasa_efectiva_n, color='#E67E22', linewidth=2.5, marker='s', markersize=3)
+                ax2.axvline(n_actual, color='red', linestyle='--', linewidth=2,
+                           label=f'N Actual ({n_actual})')
+                tasa_sin_est = tasa_gral * 100
+                ax2.axhline(tasa_sin_est, color='#E74C3C', linestyle=':',
+                           alpha=0.7, label=f'Sin Estructura ({tasa_sin_est:.1f}%)')
+                ax2.set_xlabel('Numero de Satelites', fontsize=11)
+                ax2.set_ylabel('Tasa Efectiva Grupo (%)', fontsize=11)
+                ax2.set_title('Tasa Efectiva vs N Satelites', fontsize=13, fontweight='bold')
+                ax2.grid(True, alpha=0.3)
+                ax2.legend(fontsize=9)
+
             plt.tight_layout()
 
             self.fig_sensibilidad = fig  # Guardar para Excel
@@ -1991,106 +2092,124 @@ LOG-NORMAL FIT:
             if self.canvas_equilibrio_sim:
                 self.canvas_equilibrio_sim.get_tk_widget().destroy()
     
-            fig = plt.figure(figsize=(14, 10))
-            gs = fig.add_gridspec(2, 1, height_ratios=[1, 2])
-    
-            # ----- PANEL SUPERIOR: DENSIDAD DEL GRUPO CONSOLIDADO -----
-            ax1 = fig.add_subplot(gs[0])
-    
-            # Estimación de densidad kernel (KDE) para suavizar
+            fig = plt.figure(figsize=(16, 14))
+            gs = fig.add_gridspec(2, 2, height_ratios=[1, 1.5], hspace=0.30, wspace=0.30)
+
+            # ----- PANEL SUPERIOR IZQUIERDO: DENSIDAD DEL GRUPO CONSOLIDADO -----
+            ax1 = fig.add_subplot(gs[0, 0])
+
+            # Estimacion de densidad kernel (KDE) para suavizar
             from scipy.stats import gaussian_kde
             kde_opt = gaussian_kde(saldos_g_opt)
             kde_eq  = gaussian_kde(saldos_g_eq)
-    
+
             x_min = min(saldos_g_opt.min(), saldos_g_eq.min())
             x_max = max(saldos_g_opt.max(), saldos_g_eq.max())
             x = np.linspace(x_min, x_max, 300)
-    
-            ax1.fill_between(x, kde_opt(x), alpha=0.4, color='#E74C3C', label='Óptimo (riesgo)')
-            ax1.fill_between(x, kde_eq(x),  alpha=0.5, color='#27AE60', label='Equilibrio (estable)')
-    
-            # Líneas de referencia
-            ax1.axvline(stats_eq['media'], color='#1E8449', linestyle='--', linewidth=2,
-                        label=f"Media Eq: {stats_eq['media']/1000:.0f}k")
-            ax1.axvline(stats_eq['p95'],   color='#0B5345', linestyle=':', linewidth=1.5,
-                        label=f"P95 Eq: {stats_eq['p95']/1000:.0f}k")
-            ax1.axvline(stats_opt['p95'],  color='#943126', linestyle=':', linewidth=1.5,
-                        label=f"P95 Opt: {stats_opt['p95']/1000:.0f}k")
-    
-            ax1.set_title(f'DISTRIBUCIÓN DEL SALDO DE REGULARIZACIÓN (GRUPO) – {n_sim} escenarios',
-                          fontsize=12, fontweight='bold')
-            ax1.set_xlabel('Saldo a pagar en Marzo (S/)')
-            ax1.set_ylabel('Densidad')
-            ax1.yaxis.set_visible(False)   # solo queremos ver la forma
+
+            ax1.fill_between(x, kde_opt(x), alpha=0.35, color='#E74C3C',
+                             edgecolor='#C0392B', linewidth=1.5)
+            ax1.fill_between(x, kde_eq(x),  alpha=0.55, color='#27AE60',
+                             edgecolor='#1E8449', linewidth=1.5)
+
+            # Lineas de referencia
+            ax1.axvline(stats_eq['media'], color='#1E8449', linestyle='--', linewidth=2)
+            ax1.axvline(stats_opt['media'], color='#943126', linestyle='--', linewidth=2)
+
+            ax1.set_title(f'SALDO REGULARIZACION GRUPO ({n_sim:,} sim.)',
+                          fontsize=10, fontweight='bold')
+            ax1.set_xlabel('Saldo a pagar en Marzo (S/)', fontsize=8)
+            ax1.yaxis.set_visible(False)
             ax1.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1000:.0f}k'))
-            ax1.legend(loc='upper right', fontsize=9)
-    
-            # Recuadro con estadísticas clave
-            textstr = f"Equilibrio vs Óptimo\n"
-            textstr += f"Media:    {stats_eq['media']/1000:.0f}k vs {stats_opt['media']/1000:.0f}k\n"
-            textstr += f"P95:      {stats_eq['p95']/1000:.0f}k vs {stats_opt['p95']/1000:.0f}k\n"
-            textstr += f"Reducción P95: {100*(1 - stats_eq['p95']/stats_opt['p95']):.1f}%\n"
-            textstr += f"IC 95% Eq: [{stats_eq['ic_low']/1000:.0f}k , {stats_eq['ic_high']/1000:.0f}k]\n"
-            textstr += f"p-valor (media Opt > Eq): {p_valor_diff:.4f}"
-    
-            props = dict(boxstyle='round', facecolor='wheat', alpha=0.8)
-            ax1.text(0.98, 0.95, textstr, transform=ax1.transAxes, fontsize=9,
-                     verticalalignment='top', horizontalalignment='right',
-                     bbox=props)
-    
-            # ----- PANEL INFERIOR: VIOLINPLOT POR EMPRESA -----
-            ax2 = fig.add_subplot(gs[1])
-    
-            empresas = ['Matriz'] + [s['nombre'] for s in self.resultados['satelites']]
-            data_opt = [historial_saldos[emp]['opt'] for emp in empresas]
-            data_eq  = [historial_saldos[emp]['eq']  for emp in empresas]
-    
-            posiciones = np.arange(len(empresas)) * 2.0
-            ancho = 0.7
-    
-            # Violinplots para escenario óptimo (rojo)
-            vp_opt = ax2.violinplot(data_opt, positions=posiciones - 0.4,
-                                     widths=ancho, showmeans=False, showmedians=True)
-            for pc in vp_opt['bodies']:
-                pc.set_facecolor('#E74C3C')
-                pc.set_alpha(0.5)
-                pc.set_edgecolor('#C0392B')
-            vp_opt['cmedians'].set_color('#C0392B')
-            vp_opt['cmedians'].set_linewidth(1.5)
-    
-            # Violinplots para escenario equilibrio (verde)
-            vp_eq = ax2.violinplot(data_eq, positions=posiciones + 0.4,
-                                    widths=ancho, showmeans=False, showmedians=True)
-            for pc in vp_eq['bodies']:
-                pc.set_facecolor('#27AE60')
-                pc.set_alpha(0.6)
-                pc.set_edgecolor('#1E8449')
-            vp_eq['cmedians'].set_color('#1E8449')
-            vp_eq['cmedians'].set_linewidth(1.5)
-    
-            # Línea horizontal en cero
-            ax2.axhline(0, color='black', linewidth=0.8, linestyle='-', alpha=0.7)
-            ax2.text(posiciones[-1] + 1.2, 0, 'Saldo 0', va='center', fontsize=8)
-    
-            ax2.set_title('RIESGO DE REGULARIZACIÓN POR EMPRESA (Óptimo vs Equilibrio)',
-                          fontsize=12, fontweight='bold')
-            ax2.set_xticks(posiciones)
-            ax2.set_xticklabels(empresas, fontsize=9, fontweight='bold')
-            ax2.set_ylabel('Saldo a Regularizar en Marzo (S/)')
-            ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1000:.0f}k'))
-            ax2.grid(axis='y', alpha=0.2, linestyle='--')
-    
-            # Leyenda personalizada
+            ax1.tick_params(labelsize=8)
+
+            # Leyenda compacta
             from matplotlib.patches import Patch
-            legend_elements = [
-                Patch(facecolor='#E74C3C', alpha=0.6, edgecolor='#C0392B',
-                      label='Escenario Óptimo (máx. ahorro)'),
-                Patch(facecolor='#27AE60', alpha=0.7, edgecolor='#1E8449',
-                      label='Escenario Equilibrio (saldo ~0)')
+            leg_density = [
+                Patch(facecolor='#E74C3C', alpha=0.5, edgecolor='#C0392B', label='Optimo'),
+                Patch(facecolor='#27AE60', alpha=0.6, edgecolor='#1E8449', label='Equilibrio')
             ]
-            ax2.legend(handles=legend_elements, loc='upper right', fontsize=9)
-    
-            plt.tight_layout()
+            ax1.legend(handles=leg_density, fontsize=7, loc='upper left')
+
+            # ----- PANEL SUPERIOR DERECHO: ESTADISTICAS -----
+            ax_stats = fig.add_subplot(gs[0, 1])
+            ax_stats.axis('off')
+
+            # Recuadro con estadisticas clave
+            p95_ratio = stats_eq['p95'] / stats_opt['p95'] if stats_opt['p95'] != 0 else 1
+            textstr = (
+                f"{'EQUILIBRIO vs OPTIMO':^36}\n"
+                f"{'='*36}\n\n"
+                f"{'SALDO GRUPO (Equilibrio)':}\n"
+                f"  Media:     {stats_eq['media']:>12,.0f}\n"
+                f"  Mediana:   {stats_eq['mediana']:>12,.0f}\n"
+                f"  P5:        {stats_eq['p5']:>12,.0f}\n"
+                f"  P95:       {stats_eq['p95']:>12,.0f}\n"
+                f"  IC 95%:    [{stats_eq['ic_low']:>10,.0f} ,\n"
+                f"              {stats_eq['ic_high']:>10,.0f}]\n\n"
+                f"{'SALDO GRUPO (Optimo)':}\n"
+                f"  Media:     {stats_opt['media']:>12,.0f}\n"
+                f"  P95:       {stats_opt['p95']:>12,.0f}\n\n"
+                f"Reduccion P95: {100*(1 - p95_ratio):.1f}%\n"
+                f"p-valor (Opt>Eq): {p_valor_diff:.4f}"
+            )
+
+            ax_stats.text(0.05, 0.95, textstr, transform=ax_stats.transAxes, fontsize=8,
+                          verticalalignment='top', fontfamily='monospace',
+                          bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.9,
+                                    edgecolor='#1F4E79', linewidth=1.5))
+
+            # ----- PANEL INFERIOR: BARRAS MEDIANAS POR EMPRESA (Opt vs Eq) -----
+            ax2 = fig.add_subplot(gs[1, :])
+
+            empresas = ['Matriz'] + [s['nombre'] for s in self.resultados['satelites']]
+            mediana_opt = [np.median(historial_saldos[emp]['opt']) for emp in empresas]
+            mediana_eq  = [np.median(historial_saldos[emp]['eq'])  for emp in empresas]
+            p95_opt = [np.percentile(historial_saldos[emp]['opt'], 95) for emp in empresas]
+            p5_opt  = [np.percentile(historial_saldos[emp]['opt'], 5)  for emp in empresas]
+            p95_eq  = [np.percentile(historial_saldos[emp]['eq'], 95) for emp in empresas]
+            p5_eq   = [np.percentile(historial_saldos[emp]['eq'], 5)  for emp in empresas]
+
+            x_pos = np.arange(len(empresas))
+            width = 0.35
+
+            # Barras de mediana con barras de error P5-P95
+            err_opt = [np.array(mediana_opt) - np.array(p5_opt),
+                       np.array(p95_opt) - np.array(mediana_opt)]
+            err_eq  = [np.array(mediana_eq) - np.array(p5_eq),
+                       np.array(p95_eq) - np.array(mediana_eq)]
+
+            bars_opt = ax2.bar(x_pos - width/2, mediana_opt, width, label='Optimo (max ahorro)',
+                               color='#E74C3C', alpha=0.8, edgecolor='white',
+                               yerr=err_opt, capsize=3, error_kw={'linewidth': 0.8, 'alpha': 0.5})
+            bars_eq = ax2.bar(x_pos + width/2, mediana_eq, width, label='Equilibrio (saldo~0)',
+                              color='#27AE60', alpha=0.8, edgecolor='white',
+                              yerr=err_eq, capsize=3, error_kw={'linewidth': 0.8, 'alpha': 0.5})
+
+            # Linea horizontal en cero
+            ax2.axhline(0, color='black', linewidth=1, linestyle='-', alpha=0.5)
+
+            # Etiquetas de valor sobre cada barra
+            for i, (mo, me) in enumerate(zip(mediana_opt, mediana_eq)):
+                if abs(mo) > 100:
+                    ax2.text(i - width/2, mo + (abs(mo) * 0.05 + 50) * (1 if mo >= 0 else -1),
+                             f'{mo/1000:.1f}k', ha='center', fontsize=6.5, fontweight='bold', color='#943126')
+                if abs(me) > 100:
+                    ax2.text(i + width/2, me + (abs(me) * 0.05 + 50) * (1 if me >= 0 else -1),
+                             f'{me/1000:.1f}k', ha='center', fontsize=6.5, fontweight='bold', color='#1E8449')
+
+            ax2.set_title('SALDO DE REGULARIZACION POR EMPRESA - Mediana con rango P5-P95',
+                          fontsize=11, fontweight='bold')
+            ax2.set_xticks(x_pos)
+            ax2.set_xticklabels(empresas, fontsize=8, fontweight='bold', rotation=15 if len(empresas) > 4 else 0)
+            ax2.set_ylabel('Saldo a Regularizar en Marzo (S/)', fontsize=9)
+            ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1000:.0f}k'))
+            ax2.tick_params(labelsize=8)
+            ax2.grid(axis='y', alpha=0.2, linestyle='--')
+            ax2.legend(fontsize=8, loc='upper right')
+
+            fig.suptitle(f'SIMULACION EQUILIBRIO FINANCIERO - {n_sim:,} escenarios Monte Carlo',
+                         fontsize=13, fontweight='bold', y=0.99)
             self.fig_equilibrio_sim = fig
     
             # --------------------------------------------------------------
@@ -3319,6 +3438,50 @@ LOG-NORMAL FIT:
                     ws5['B6'] = "Ejecute el Analisis de Sensibilidad para generar graficos."
                     ws5['B6'].font = Font(italic=True, color='999999', size=11)
 
+                # Tabla de datos N-Satelites si existe
+                if self.datos_sensibilidad_nsats:
+                    dns = self.datos_sensibilidad_nsats
+                    fila_ns = 28 if img_sensibilidad else 8
+                    ws5.merge_cells(f'B{fila_ns}:F{fila_ns}')
+                    c = ws5[f'B{fila_ns}']
+                    c.value = "SENSIBILIDAD: NUMERO DE SATELITES"
+                    self._aplicar_estilo(c, self._estilo_subtitulo())
+
+                    ws5.merge_cells(f'B{fila_ns+1}:F{fila_ns+1}')
+                    c = ws5[f'B{fila_ns+1}']
+                    c.value = (f"Satelite referencia: Costo={dns['costo_ref']:,.0f}, "
+                              f"Gastos={dns['gastos_ref']:,.0f} | N actual={dns['n_actual']}")
+                    c.font = Font(name='Calibri', italic=True, color='666666', size=9)
+
+                    ns_headers = ["N Satelites", "Ahorro Tributario (S/)", "Tasa Efectiva (%)",
+                                  "IR Grupo (S/)", "Ahorro Marginal (S/)"]
+                    for j, h in enumerate(ns_headers, 2):
+                        c = ws5.cell(row=fila_ns + 2, column=j)
+                        c.value = h
+                        self._aplicar_estilo(c, self._estilo_header())
+
+                    ahorros_arr_ns = dns['ahorros']
+                    for i, n in enumerate(dns['ns']):
+                        f = fila_ns + 3 + i
+                        ahorro_marginal = (ahorros_arr_ns[i] - ahorros_arr_ns[i-1]) if i > 0 else ahorros_arr_ns[0]
+                        datos_fila = [n, ahorros_arr_ns[i], dns['tasa_efectiva'][i],
+                                      dns['ir_grupo'][i], ahorro_marginal]
+                        for j, val in enumerate(datos_fila, 2):
+                            c = ws5.cell(row=f, column=j)
+                            c.value = val
+                            if j == 2:
+                                c.number_format = '0'
+                            elif j == 4:
+                                c.number_format = '0.00"%"'
+                            else:
+                                c.number_format = '#,##0'
+                            self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+                            if n == dns['n_actual']:
+                                c.font = Font(name='Calibri', bold=True, color='2E75B6', size=10)
+
+                    for col_idx in range(2, 7):
+                        ws5.column_dimensions[get_column_letter(col_idx)].width = 22
+
                 # ========================================================
                 # HOJA 6: ANALISIS COMPARATIVO
                 # ========================================================
@@ -3997,36 +4160,40 @@ LOG-NORMAL FIT:
                 c.value = "SIMULACION MONTE CARLO - EQUILIBRIO FINANCIERO"
                 self._aplicar_estilo(c, self._estilo_titulo())
 
-                if self.datos_equilibrio_sim and isinstance(self.datos_equilibrio_sim, dict) and 'margen_media' in self.datos_equilibrio_sim:
+                if self.datos_equilibrio_sim and isinstance(self.datos_equilibrio_sim, dict) and 'grupo_eq' in self.datos_equilibrio_sim:
                     deq = self.datos_equilibrio_sim
+                    seq = deq.get('grupo_eq', {})
+                    sopt = deq.get('grupo_opt', {})
+                    cfg = deq.get('config', {})
 
                     ws10.merge_cells('B4:C4')
                     c = ws10['B4']
-                    c.value = "ESTADISTICAS MARGEN DE EQUILIBRIO"
+                    c.value = "SALDO DE REGULARIZACION - EQUILIBRIO vs OPTIMO"
                     self._aplicar_estilo(c, self._estilo_subtitulo())
 
                     stats_eq_data = [
                         ("Iteraciones", f"{deq.get('n_sim', 0):,}"),
-                        ("Variabilidad", f"+/-{deq.get('variabilidad', 0):.1f}%"),
+                        ("Variabilidad Satelites", f"+/-{deq.get('variabilidad', 0):.1f}%"),
                         ("", ""),
-                        ("--- MARGEN EQUILIBRIO ---", ""),
-                        ("Media", f"{deq.get('margen_media', 0):.4f}%"),
-                        ("Mediana", f"{deq.get('margen_mediana', 0):.4f}%"),
-                        ("Desv. Estandar", f"{deq.get('margen_std', 0):.4f}%"),
-                        ("Percentil 5", f"{deq.get('margen_p5', 0):.4f}%"),
-                        ("Percentil 95", f"{deq.get('margen_p95', 0):.4f}%"),
-                        (f"IC {deq.get('conf_nivel', 95):.0f}% Inferior", f"{deq.get('ic_margen_lower', 0):.4f}%"),
-                        (f"IC {deq.get('conf_nivel', 95):.0f}% Superior", f"{deq.get('ic_margen_upper', 0):.4f}%"),
+                        ("--- ESCENARIO EQUILIBRIO (Grupo) ---", ""),
+                        ("Media Saldo", f"S/ {seq.get('media', 0):,.0f}"),
+                        ("Mediana Saldo", f"S/ {seq.get('mediana', 0):,.0f}"),
+                        ("Desv. Estandar", f"S/ {seq.get('std', 0):,.0f}"),
+                        ("Percentil 5", f"S/ {seq.get('p5', 0):,.0f}"),
+                        ("Percentil 25", f"S/ {seq.get('p25', 0):,.0f}"),
+                        ("Percentil 75", f"S/ {seq.get('p75', 0):,.0f}"),
+                        ("Percentil 95", f"S/ {seq.get('p95', 0):,.0f}"),
+                        ("IC 95% Inferior", f"S/ {seq.get('ic_low', 0):,.0f}"),
+                        ("IC 95% Superior", f"S/ {seq.get('ic_high', 0):,.0f}"),
                         ("", ""),
-                        ("--- AHORRO EN EQUILIBRIO ---", ""),
-                        ("Media", f"S/ {deq.get('ahorro_media', 0):,.0f}"),
-                        ("Mediana", f"S/ {deq.get('ahorro_mediana', 0):,.0f}"),
-                        ("Desv. Estandar", f"S/ {deq.get('ahorro_std', 0):,.0f}"),
-                        ("Percentil 5", f"S/ {deq.get('ahorro_p5', 0):,.0f}"),
-                        ("Percentil 95", f"S/ {deq.get('ahorro_p95', 0):,.0f}"),
-                        (f"IC {deq.get('conf_nivel', 95):.0f}% Inferior", f"S/ {deq.get('ic_ahorro_lower', 0):,.0f}"),
-                        (f"IC {deq.get('conf_nivel', 95):.0f}% Superior", f"S/ {deq.get('ic_ahorro_upper', 0):,.0f}"),
-                        ("P-Valor (Bootstrap)", f"{deq.get('p_valor_boot', 1):.4e}"),
+                        ("--- ESCENARIO OPTIMO (Grupo) ---", ""),
+                        ("Media Saldo", f"S/ {sopt.get('media', 0):,.0f}"),
+                        ("Mediana Saldo", f"S/ {sopt.get('mediana', 0):,.0f}"),
+                        ("Percentil 95", f"S/ {sopt.get('p95', 0):,.0f}"),
+                        ("", ""),
+                        ("--- COMPARACION ---", ""),
+                        ("Reduccion P95", f"{100*(1 - seq.get('p95', 0)/sopt.get('p95', 1)):.1f}%" if sopt.get('p95', 0) != 0 else "N/A"),
+                        ("P-Valor (Opt > Eq)", f"{deq.get('p_valor_diferencia', 1):.4e}"),
                     ]
                     for i, (lab, val) in enumerate(stats_eq_data):
                         fila = 5 + i
@@ -4040,71 +4207,57 @@ LOG-NORMAL FIT:
                         c.value = val
                         self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
 
-                    # Distribucion de regimenes
-                    fila_r = 5 + len(stats_eq_data) + 1
-                    ws10.merge_cells(f'B{fila_r}:C{fila_r}')
-                    c = ws10[f'B{fila_r}']
-                    c.value = "DISTRIBUCION DE REGIMENES EN SIMULACION"
+                    # Detalle por empresa
+                    fila_emp = 5 + len(stats_eq_data) + 1
+                    ws10.merge_cells(f'B{fila_emp}:H{fila_emp}')
+                    c = ws10[f'B{fila_emp}']
+                    c.value = "DETALLE POR EMPRESA - MEDIANA SALDO (S/)"
                     self._aplicar_estilo(c, self._estilo_subtitulo())
 
-                    reg = deq.get('regimenes', {"Especial": 0, "Mixto": 0, "General": 0, "Sin_solucion": 0})
-                    total_reg = sum(reg.values()) if reg else 1
-                    reg_data = [
-                        ("Especial Puro", f"{reg.get('Especial', 0):,} ({reg.get('Especial', 0)/max(1,total_reg)*100:.1f}%)"),
-                        ("Mixto MYPE", f"{reg.get('Mixto', 0):,} ({reg.get('Mixto', 0)/max(1,total_reg)*100:.1f}%)"),
-                        ("General Puro", f"{reg.get('General', 0):,} ({reg.get('General', 0)/max(1,total_reg)*100:.1f}%)"),
-                        ("Sin solucion", f"{reg.get('Sin_solucion', 0):,} ({reg.get('Sin_solucion', 0)/max(1,total_reg)*100:.1f}%)"),
-                    ]
-                    for i, (lab, val) in enumerate(reg_data):
-                        f = fila_r + 1 + i
-                        c = ws10.cell(row=f, column=2)
-                        c.value = lab
-                        self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
-                        c.alignment = Alignment(horizontal='left')
-                        c = ws10.cell(row=f, column=3)
-                        c.value = val
-                        self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+                    emp_headers = ["Empresa", "Mediana Opt", "P5 Opt", "P95 Opt",
+                                   "Mediana Eq", "P5 Eq", "P95 Eq"]
+                    for j, h in enumerate(emp_headers, 2):
+                        c = ws10.cell(row=fila_emp + 1, column=j)
+                        c.value = h
+                        self._aplicar_estilo(c, self._estilo_header())
 
-                    # Log-Normal fit
-                    fila_ln = fila_r + 1 + len(reg_data) + 1  # default position
-                    ln_data_ws10 = []
-                    if deq.get('ln_ajustado'):
-                        fila_ln = fila_r + 1 + len(reg_data) + 1
-                        ws10.merge_cells(f'B{fila_ln}:C{fila_ln}')
-                        c = ws10[f'B{fila_ln}']
-                        c.value = "AJUSTE LOG-NORMAL (Margen Equilibrio)"
-                        self._aplicar_estilo(c, self._estilo_subtitulo())
-                        ln_data_ws10 = [
-                            ("Shape (s)", f"{deq.get('ln_shape', 0):.4f}"),
-                            ("Scale", f"{deq.get('ln_scale', 0):.4f}"),
-                        ]
-                        for i, (lab, val) in enumerate(ln_data_ws10):
-                            f = fila_ln + 1 + i
-                            c = ws10.cell(row=f, column=2)
-                            c.value = lab
-                            self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
-                            c = ws10.cell(row=f, column=3)
-                            c.value = val
+                    hist = deq.get('historial_saldos', {})
+                    empresas_exp = deq.get('empresas', [])
+                    for i, emp in enumerate(empresas_exp):
+                        f = fila_emp + 2 + i
+                        emp_hist = hist.get(emp, {'opt': [0], 'eq': [0]})
+                        opt_arr = np.array(emp_hist['opt']) if emp_hist['opt'] else np.array([0])
+                        eq_arr = np.array(emp_hist['eq']) if emp_hist['eq'] else np.array([0])
+                        vals = [emp,
+                                float(np.median(opt_arr)), float(np.percentile(opt_arr, 5)),
+                                float(np.percentile(opt_arr, 95)),
+                                float(np.median(eq_arr)), float(np.percentile(eq_arr, 5)),
+                                float(np.percentile(eq_arr, 95))]
+                        for j, val in enumerate(vals, 2):
+                            c = ws10.cell(row=f, column=j)
+                            if isinstance(val, float):
+                                c.value = val
+                                c.number_format = '#,##0'
+                            else:
+                                c.value = val
                             self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
 
+                    fila_cfg = fila_emp + 2 + len(empresas_exp) + 1
                     # Notas de configuracion matriz
-                    if deq.get('var_matriz_costos') or deq.get('var_matriz_ingresos'):
-                        fila_mat = fila_r + 1 + len(reg_data) + 1
-                        if deq.get('ln_ajustado') and ln_data_ws10:
-                            fila_mat = fila_ln + 1 + len(ln_data_ws10) + 1
-                        ws10.merge_cells(f'B{fila_mat}:C{fila_mat}')
-                        c = ws10[f'B{fila_mat}']
+                    if cfg.get('var_matriz_costos') or cfg.get('var_matriz_ingresos'):
+                        ws10.merge_cells(f'B{fila_cfg}:C{fila_cfg}')
+                        c = ws10[f'B{fila_cfg}']
                         c.value = "CONFIGURACION VARIABILIDAD MATRIZ"
                         self._aplicar_estilo(c, self._estilo_subtitulo())
                         mat_notas = []
-                        if deq.get('var_matriz_costos'):
-                            mat_notas.append(("Var. Costos Matriz", f"+/-{deq.get('pct_var_costos', 0):.1f}%"))
-                        if deq.get('var_matriz_ingresos'):
-                            mat_notas.append(("Var. Ingresos Matriz", f"+/-{deq.get('pct_var_ingresos', 0):.1f}%"))
-                        mat_notas.append(("Distribucion", deq.get('distribucion', 'Log-normal')))
-                        mat_notas.append(("Correlacion (rho)", f"{deq.get('rho', 0):.2f}"))
+                        if cfg.get('var_matriz_costos'):
+                            mat_notas.append(("Var. Costos Matriz", f"+/-{cfg.get('pct_var_costos', 0):.1f}%"))
+                        if cfg.get('var_matriz_ingresos'):
+                            mat_notas.append(("Var. Ingresos Matriz", f"+/-{cfg.get('pct_var_ingresos', 0):.1f}%"))
+                        mat_notas.append(("Distribucion", cfg.get('distribucion', 'Log-normal')))
+                        mat_notas.append(("Correlacion (rho)", f"{cfg.get('rho', 0):.2f}"))
                         for i, (lab, val) in enumerate(mat_notas):
-                            f = fila_mat + 1 + i
+                            f = fila_cfg + 1 + i
                             c = ws10.cell(row=f, column=2)
                             c.value = lab
                             self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
@@ -4113,11 +4266,13 @@ LOG-NORMAL FIT:
                             c.value = val
                             self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
 
-                    ws10.column_dimensions['B'].width = 26
-                    ws10.column_dimensions['C'].width = 28
+                    ws10.column_dimensions['B'].width = 22
+                    ws10.column_dimensions['C'].width = 18
+                    for col_idx in range(4, 9):
+                        ws10.column_dimensions[get_column_letter(col_idx)].width = 16
 
                     if img_equilibrio_sim:
-                        self._insertar_imagen(ws10, img_equilibrio_sim, 'E4', ancho_cm=36, alto_cm=22)
+                        self._insertar_imagen(ws10, img_equilibrio_sim, 'J4', ancho_cm=36, alto_cm=28)
                 else:
                     ws10['B4'] = "Ejecute 'Simular Equilibrio (Monte Carlo)' en la pestana Pagos a Cuenta."
                     ws10['B4'].font = Font(italic=True, color='999999', size=11)
