@@ -34,7 +34,8 @@ class OptimizadorPro:
         self.ALFA_SIG = tk.DoubleVar(value=0.05)       # Para Prueba Hipótesis
         self.COMP_LIMITE_PCT = tk.DoubleVar(value=20.0)# % de incremento en comparativo
         self.COMP_TASA_DELTA = tk.DoubleVar(value=2.0) # puntos de reducción en comparativo
-                       
+        self.TASA_PAGO_CUENTA = tk.DoubleVar(value=1.5)  # Tasa pago a cuenta IR (%)
+
         
         self.satelites_entries = []
         # Almacenar figuras para exportación Excel
@@ -43,6 +44,8 @@ class OptimizadorPro:
         self.fig_sensibilidad = None
         self.fig_comparativo = None
         self.datos_simulacion = None  # Estadísticas Monte Carlo
+        self.fig_pagos_cuenta = None
+        self.datos_pagos_cuenta = None
         self.crear_interfaz()
         
     def crear_interfaz(self):
@@ -67,13 +70,17 @@ class OptimizadorPro:
         
         tab_comparativo = ttk.Frame(notebook)
         notebook.add(tab_comparativo, text='Análisis Comparativo')
-        
+
+        tab_pagos_cuenta = ttk.Frame(notebook)
+        notebook.add(tab_pagos_cuenta, text='Pagos a Cuenta y Equilibrio')
+
         self.crear_tab_configuracion(tab_config)
         self.crear_tab_datos(tab_datos)
         self.crear_tab_resultados(tab_resultados)
         self.crear_tab_simulacion(tab_simulacion)
         self.crear_tab_sensibilidad(tab_sensibilidad)
         self.crear_tab_comparativo(tab_comparativo)
+        self.crear_tab_pagos_cuenta(tab_pagos_cuenta)
         
     def crear_tab_configuracion(self, parent):
         canvas = tk.Canvas(parent)
@@ -111,7 +118,11 @@ class OptimizadorPro:
         ttk.Label(frame_parametros, text="Límite Ingresos Régimen Especial (UIT):").grid(row=4, column=0, sticky='w', pady=8)
         entry_lim_ing = ttk.Entry(frame_parametros, textvariable=self.LIMITE_INGRESOS_UIT, width=20)
         entry_lim_ing.grid(row=4, column=1, pady=8, padx=5)
-        
+
+        ttk.Label(frame_parametros, text="Tasa Pago a Cuenta IR (%):").grid(row=5, column=0, sticky='w', pady=8)
+        entry_tasa_pc = ttk.Entry(frame_parametros, textvariable=self.TASA_PAGO_CUENTA, width=20)
+        entry_tasa_pc.grid(row=5, column=1, pady=8, padx=5)
+
         # SECCIÓN: Estructura del Grupo
         frame_estructura = ttk.LabelFrame(scrollable_frame, text="Estructura del Grupo Empresarial", padding=20)
         frame_estructura.grid(row=1, column=0, padx=10, pady=10, sticky='ew', columnspan=2)
@@ -380,6 +391,56 @@ class OptimizadorPro:
         self.canvas_comparativo = None
         self.frame_comp_container = frame_comp_resultados
         
+    def crear_tab_pagos_cuenta(self, parent):
+        canvas = tk.Canvas(parent)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        frame_config_pc = ttk.LabelFrame(scrollable_frame,
+                                         text="Analisis de Pagos a Cuenta y Equilibrio Fiscal (Teoria de Juegos)",
+                                         padding=15)
+        frame_config_pc.grid(row=0, column=0, padx=10, pady=10, sticky='ew')
+
+        ttk.Label(frame_config_pc, text="Tasa Pago a Cuenta (%):").grid(row=0, column=0, sticky='w', pady=5)
+        ttk.Entry(frame_config_pc, textvariable=self.TASA_PAGO_CUENTA, width=12).grid(row=0, column=1, padx=5, pady=5)
+
+        ttk.Label(frame_config_pc, text="Pasos Sensibilidad:").grid(row=0, column=2, sticky='w', padx=10, pady=5)
+        self.entry_pasos_sens_pc = ttk.Entry(frame_config_pc, width=12)
+        self.entry_pasos_sens_pc.insert(0, "15")
+        self.entry_pasos_sens_pc.grid(row=0, column=3, padx=5, pady=5)
+
+        ttk.Button(frame_config_pc, text="Ejecutar Analisis Pagos a Cuenta y Sensibilidad",
+                   command=self.analizar_pagos_cuenta).grid(row=1, column=0, columnspan=4, pady=10)
+
+        # Texto de resultados
+        frame_texto_pc = ttk.LabelFrame(scrollable_frame, text="Analisis Detallado por Satelite", padding=10)
+        frame_texto_pc.grid(row=1, column=0, padx=10, pady=5, sticky='ew')
+        self.text_pagos_cuenta = tk.Text(frame_texto_pc, height=18, width=140, wrap='none', font=('Courier', 8))
+        scroll_h = ttk.Scrollbar(frame_texto_pc, orient='horizontal', command=self.text_pagos_cuenta.xview)
+        scroll_v = ttk.Scrollbar(frame_texto_pc, orient='vertical', command=self.text_pagos_cuenta.yview)
+        self.text_pagos_cuenta.configure(xscrollcommand=scroll_h.set, yscrollcommand=scroll_v.set)
+        self.text_pagos_cuenta.grid(row=0, column=0, sticky='nsew')
+        scroll_v.grid(row=0, column=1, sticky='ns')
+        scroll_h.grid(row=1, column=0, sticky='ew')
+        frame_texto_pc.columnconfigure(0, weight=1)
+        frame_texto_pc.rowconfigure(0, weight=1)
+
+        # Graficos
+        self.frame_pagos_graficos = ttk.LabelFrame(scrollable_frame, text="Visualizacion Pagos a Cuenta vs IR", padding=10)
+        self.frame_pagos_graficos.grid(row=2, column=0, padx=10, pady=5, sticky='ew')
+        self.canvas_pagos_cuenta = None
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
     def actualizar_info_parametros(self):
         uit = self.UIT.get()
         tasa_gral = self.TASA_GENERAL.get()
@@ -393,22 +454,30 @@ class OptimizadorPro:
         
         ahorro_max = lim_util_soles * (diferencial / 100) * self.num_satelites.get()
         
+        tasa_pc = self.TASA_PAGO_CUENTA.get()
+
         info_text = f"""
-PARÁMETROS ACTUALES:
+PARAMETROS ACTUALES:
 
 UIT:                                {uit:>15,.2f}
-Tasa Régimen General:               {tasa_gral:>15.2f}%
-Tasa Régimen Especial:              {tasa_esp:>15.2f}%
+Tasa Regimen General:               {tasa_gral:>15.2f}%
+Tasa Regimen Especial:              {tasa_esp:>15.2f}%
 Diferencial:                        {diferencial:>15.2f} puntos
+Tasa Pago a Cuenta IR:              {tasa_pc:>15.2f}%
 
-Límite Utilidad:                    {lim_util_soles:>15,.2f}
-Límite Ingresos:                    {lim_ing_soles:>15,.2f}
+Limite Utilidad:                    {lim_util_soles:>15,.2f}
+Limite Ingresos:                    {lim_ing_soles:>15,.2f}
 
-Ahorro máximo total:                {ahorro_max:>15,.2f}
-Número satélites:                   {self.num_satelites.get():>15}
+Ahorro maximo total:                {ahorro_max:>15,.2f}
+Numero satelites:                   {self.num_satelites.get():>15}
 
-FÓRMULA MARGEN ÓPTIMO (con gastos):
+FORMULA MARGEN OPTIMO (con gastos):
 m* = (Limite_Utilidad + Gastos_Operativos) / Costos
+
+FORMULA MARGEN EQUILIBRIO (IR = Pago a Cuenta):
+m_eq = (t_pc * C + t_esp * G) / (C * (t_esp - t_pc))
+
+Margen Equilibrio sin gastos:       {(tasa_pc / (tasa_esp - tasa_pc) * 100):>15.2f}%
         """
         
         self.label_info.config(text=info_text)
@@ -606,11 +675,27 @@ m* = (Limite_Utilidad + Gastos_Operativos) / Costos
                     
                     regimen = "ESPECIAL"
                 
+                # Pagos a cuenta (1.5% del precio de venta)
+                tasa_pc = self.TASA_PAGO_CUENTA.get() / 100
+                pago_a_cuenta = tasa_pc * precio_venta
+                saldo_regularizacion = impuesto_satelite - pago_a_cuenta
+
+                # Margen de equilibrio: donde IR = pago a cuenta
+                margen_equilibrio_pc = None
+                if not usar_regimen_general and (tasa_especial - tasa_pc) > 0:
+                    m_eq = (tasa_pc * costo + tasa_especial * gastos) / (costo * (tasa_especial - tasa_pc))
+                    util_eq = costo * m_eq - gastos
+                    if util_eq <= limite_utilidad and costo * (1 + m_eq) <= limite_ingresos:
+                        margen_equilibrio_pc = m_eq * 100
+                elif usar_regimen_general and (tasa_general - tasa_pc) > 0:
+                    m_eq = (tasa_pc * costo + tasa_general * gastos) / (costo * (tasa_general - tasa_pc))
+                    margen_equilibrio_pc = m_eq * 100
+
                 # Acumular totales
                 total_utilidad_satelites += max(0, utilidad_neta)
                 total_impuesto_satelites += impuesto_satelite
                 total_compras_matriz += precio_venta
-                
+
                 resultados_satelites.append({
                     'nombre': sat['nombre'],
                     'tipo': sat['tipo'],
@@ -625,7 +710,10 @@ m* = (Limite_Utilidad + Gastos_Operativos) / Costos
                     'tasa_efectiva': tasa_efectiva,
                     'rentabilidad': (max(0, utilidad_neta) / precio_venta * 100) if precio_venta > 0 else 0,
                     'ahorro_individual': ahorro_individual,
-                    'ajuste_aplicado': ajuste_aplicado
+                    'ajuste_aplicado': ajuste_aplicado,
+                    'pago_a_cuenta': pago_a_cuenta,
+                    'saldo_regularizacion': saldo_regularizacion,
+                    'margen_equilibrio_pc': margen_equilibrio_pc
                 })
             
             # Calcular nueva utilidad matriz
@@ -726,6 +814,9 @@ EMPRESAS SATÉLITES
    Impuesto (Tasa: {sat['tasa_efectiva']:.2f}%):           {sat['impuesto']:>15,.2f}
    Ahorro Individual:                  {sat['ahorro_individual']:>15,.2f}
    ROI:                                {sat['rentabilidad']:>15.2f}%
+   Pago a Cuenta ({self.TASA_PAGO_CUENTA.get():.1f}%):            {sat['pago_a_cuenta']:>15,.2f}
+   Saldo Regularizacion:               {sat['saldo_regularizacion']:>15,.2f}  {'(Favor)' if sat['saldo_regularizacion'] < 0 else '(Pagar)'}
+   Margen Equilibrio (IR=PaC):         {f"{sat['margen_equilibrio_pc']:.4f}%" if sat['margen_equilibrio_pc'] is not None else "N/A":>15}
    Ajuste: {sat['ajuste_aplicado']}
 """
         
@@ -733,10 +824,12 @@ EMPRESAS SATÉLITES
         
         texto += f"""
 {'-'*110}
-CONSOLIDADO SATÉLITES:
+CONSOLIDADO SATELITES:
   Total Utilidad Neta:                 {r['grupo']['total_utilidad_satelites']:>15,.2f}
   Total Impuesto:                      {r['grupo']['total_impuesto_satelites']:>15,.2f}
-  Ahorro Total Satélites:              {sum([s['ahorro_individual'] for s in r['satelites']]):>15,.2f}
+  Ahorro Total Satelites:              {sum([s['ahorro_individual'] for s in r['satelites']]):>15,.2f}
+  Total Pagos a Cuenta:                {sum([s['pago_a_cuenta'] for s in r['satelites']]):>15,.2f}
+  Total Saldo Regularizacion:          {sum([s['saldo_regularizacion'] for s in r['satelites']]):>15,.2f}
 
 {'-'*110}
 {r['matriz']['nombre']} (con estructura):
@@ -1379,6 +1472,318 @@ permitido en el régimen especial, maximizando el ahorro tributario.
             messagebox.showerror("Error", f"Error en comparativo: {str(e)}")
 
         
+    def analizar_pagos_cuenta(self):
+        """Analisis de pagos a cuenta, punto de equilibrio fiscal y sensibilidad por satelite.
+
+        Teoria de Juegos: El margen optimo resulta del equilibrio de Nash entre
+        maximizar el ahorro por regimen especial y minimizar el saldo a favor
+        generado por los pagos a cuenta obligatorios (1.5% del ingreso).
+        """
+        try:
+            if not hasattr(self, 'resultados'):
+                messagebox.showwarning("Advertencia", "Primero debe calcular los margenes optimos")
+                return
+
+            tasa_pc = self.TASA_PAGO_CUENTA.get() / 100
+            tasa_general = self.resultados['parametros']['tasa_general'] / 100
+            tasa_especial = self.resultados['parametros']['tasa_especial'] / 100
+            limite_utilidad = self.resultados['parametros']['limite_utilidad']
+            limite_ingresos = self.resultados['parametros']['limite_ingresos']
+            n_pasos = int(self.entry_pasos_sens_pc.get())
+
+            resultados_pc = []
+
+            for sat in self.resultados['satelites']:
+                costo = sat['costo']
+                gastos = sat['gastos_operativos']
+                margen_actual = sat['margen_optimo'] / 100
+                es_general = sat['regimen'].startswith('GENERAL')
+
+                # Margen de equilibrio: donde IR = pago a cuenta
+                margen_equilibrio = None
+                if not es_general and (tasa_especial - tasa_pc) > 0:
+                    m_eq = (tasa_pc * costo + tasa_especial * gastos) / (costo * (tasa_especial - tasa_pc))
+                    util_eq = costo * m_eq - gastos
+                    if util_eq <= limite_utilidad and costo * (1 + m_eq) <= limite_ingresos:
+                        margen_equilibrio = m_eq
+                    else:
+                        if (tasa_general - tasa_pc) > 0:
+                            m_eq_gral = (tasa_pc * costo + tasa_general * gastos) / (costo * (tasa_general - tasa_pc))
+                            margen_equilibrio = m_eq_gral
+                elif es_general and (tasa_general - tasa_pc) > 0:
+                    m_eq_gral = (tasa_pc * costo + tasa_general * gastos) / (costo * (tasa_general - tasa_pc))
+                    margen_equilibrio = m_eq_gral
+
+                # Situacion actual
+                precio_actual = costo * (1 + margen_actual)
+                pago_cuenta_actual = tasa_pc * precio_actual
+                ir_actual = sat['impuesto']
+                saldo_actual = ir_actual - pago_cuenta_actual
+                eficiencia_pc = (ir_actual / pago_cuenta_actual * 100) if pago_cuenta_actual > 0 else 0
+
+                # Sensibilidad: variar margen desde cerca de cero hasta bien arriba del optimo
+                margen_min = max(0.001, margen_actual * 0.1)
+                margen_max_feasible = min(limite_ingresos / costo - 1, 1.0) if costo > 0 else 1.0
+                margen_max = min(margen_actual * 3.0, margen_max_feasible)
+                if margen_max <= margen_min:
+                    margen_max = margen_min + 0.10
+
+                margenes_test = np.linspace(margen_min, margen_max, n_pasos)
+
+                # Incluir margen actual y equilibrio en la lista
+                margenes_extras = [margen_actual]
+                if margen_equilibrio is not None:
+                    margenes_extras.append(margen_equilibrio)
+                margenes_test = np.sort(np.unique(np.concatenate([margenes_test, margenes_extras])))
+
+                sensibilidad = []
+                for m in margenes_test:
+                    precio = costo * (1 + m)
+                    utilidad_bruta = costo * m
+                    utilidad_neta = max(0, utilidad_bruta - gastos)
+
+                    if es_general:
+                        ir = utilidad_neta * tasa_general
+                        regimen_m = "General"
+                        ahorro_regimen = 0
+                    elif utilidad_neta > limite_utilidad or precio > limite_ingresos:
+                        if utilidad_neta > limite_utilidad:
+                            ir = limite_utilidad * tasa_especial + (utilidad_neta - limite_utilidad) * tasa_general
+                            regimen_m = "Mixto"
+                        else:
+                            ir = utilidad_neta * tasa_general
+                            regimen_m = "General*"
+                        ahorro_regimen = utilidad_neta * tasa_general - ir
+                    else:
+                        ir = utilidad_neta * tasa_especial
+                        regimen_m = "Especial"
+                        ahorro_regimen = utilidad_neta * (tasa_general - tasa_especial)
+
+                    pago_cuenta = tasa_pc * precio
+                    saldo = ir - pago_cuenta
+                    efic = (ir / pago_cuenta * 100) if pago_cuenta > 0 else 0
+
+                    sensibilidad.append({
+                        'margen': m * 100,
+                        'precio_venta': precio,
+                        'utilidad_neta': utilidad_neta,
+                        'regimen': regimen_m,
+                        'ir': ir,
+                        'pago_cuenta': pago_cuenta,
+                        'saldo': saldo,
+                        'ahorro_regimen': ahorro_regimen,
+                        'eficiencia_pc': efic,
+                        'es_optimo': abs(m - margen_actual) < 0.0001,
+                        'es_equilibrio': margen_equilibrio is not None and abs(m - margen_equilibrio) < 0.0001,
+                    })
+
+                # Sensibilidad bidimensional: margen x tasa_pago_cuenta
+                tasas_pc_test = [0.5, 1.0, 1.5, 2.0, 2.5]
+                sens_2d = []
+                for t_pc in tasas_pc_test:
+                    t_pc_dec = t_pc / 100
+                    precio_opt = costo * (1 + margen_actual)
+                    util_opt = max(0, costo * margen_actual - gastos)
+                    if es_general:
+                        ir_opt = util_opt * tasa_general
+                    elif util_opt <= limite_utilidad:
+                        ir_opt = util_opt * tasa_especial
+                    else:
+                        ir_opt = limite_utilidad * tasa_especial + (util_opt - limite_utilidad) * tasa_general
+                    pc_opt = t_pc_dec * precio_opt
+                    saldo_opt = ir_opt - pc_opt
+                    sens_2d.append({
+                        'tasa_pc': t_pc,
+                        'pago_cuenta': pc_opt,
+                        'ir': ir_opt,
+                        'saldo': saldo_opt,
+                        'eficiencia': (ir_opt / pc_opt * 100) if pc_opt > 0 else 0,
+                    })
+
+                resultados_pc.append({
+                    'nombre': sat['nombre'],
+                    'costo': costo,
+                    'gastos': gastos,
+                    'margen_optimo_regimen': margen_actual * 100,
+                    'margen_equilibrio': margen_equilibrio * 100 if margen_equilibrio is not None else None,
+                    'pago_cuenta_actual': pago_cuenta_actual,
+                    'ir_actual': ir_actual,
+                    'saldo_actual': saldo_actual,
+                    'eficiencia_pc': eficiencia_pc,
+                    'sensibilidad': sensibilidad,
+                    'sensibilidad_2d': sens_2d,
+                    'es_general': es_general,
+                })
+
+            self.datos_pagos_cuenta = {
+                'tasa_pago_cuenta': tasa_pc * 100,
+                'satelites': resultados_pc,
+                'total_pagos_cuenta': sum(r['pago_cuenta_actual'] for r in resultados_pc),
+                'total_ir': sum(r['ir_actual'] for r in resultados_pc),
+                'total_saldo': sum(r['saldo_actual'] for r in resultados_pc),
+            }
+
+            self._mostrar_resultados_pagos_cuenta()
+            self._generar_graficos_pagos_cuenta()
+
+            messagebox.showinfo("Analisis Completo",
+                                f"Pagos a Cuenta analizados para {len(resultados_pc)} satelites.\n"
+                                f"Saldo Total Regularizacion: {self.datos_pagos_cuenta['total_saldo']:,.2f}")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Error en analisis de pagos a cuenta: {str(e)}")
+
+    def _mostrar_resultados_pagos_cuenta(self):
+        """Muestra resultados del analisis de pagos a cuenta en la pestana."""
+        self.text_pagos_cuenta.delete(1.0, tk.END)
+        d = self.datos_pagos_cuenta
+
+        texto = f"""{'='*140}
+  ANALISIS DE PAGOS A CUENTA Y PUNTO DE EQUILIBRIO FISCAL - TEORIA DE JUEGOS
+  Tasa Pago a Cuenta: {d['tasa_pago_cuenta']:.1f}%
+{'='*140}
+
+  LOGICA: El pago a cuenta del {d['tasa_pago_cuenta']:.1f}% es un adelanto obligatorio del IR. El margen optimo debe equilibrar:
+    1. MAXIMIZAR el ahorro por regimen especial (diferencial de tasas)
+    2. CONSUMIR eficientemente los pagos a cuenta (evitar saldo a favor excesivo)
+
+  EQUILIBRIO DE NASH: El margen donde IR_anual = Pagos_a_Cuenta es el punto de equilibrio fiscal.
+    Formula: m_eq = (t_pc * C + t_esp * G) / (C * (t_esp - t_pc))
+
+{'='*140}
+  RESUMEN CONSOLIDADO
+{'='*140}
+  Total Pagos a Cuenta:           {d['total_pagos_cuenta']:>15,.2f}
+  Total IR Satelites:             {d['total_ir']:>15,.2f}
+  Saldo Regularizacion Total:     {d['total_saldo']:>15,.2f}  {'(SALDO A FAVOR)' if d['total_saldo'] < 0 else '(SALDO POR PAGAR)'}
+"""
+
+        for i, sat in enumerate(d['satelites'], 1):
+            texto += f"""
+{'='*140}
+  {i}. {sat['nombre']} | Costo: {sat['costo']:,.0f} | Gastos: {sat['gastos']:,.0f}
+{'='*140}
+  Margen Optimo (regimen):        {sat['margen_optimo_regimen']:>10.4f}%
+  Margen Equilibrio (IR=PaC):     {sat['margen_equilibrio']:>10.4f}%  {'' if sat['margen_equilibrio'] is not None else 'N/A'}
+  Pago a Cuenta Anual:            {sat['pago_cuenta_actual']:>15,.2f}
+  IR Anual:                       {sat['ir_actual']:>15,.2f}
+  Saldo Regularizacion:           {sat['saldo_actual']:>15,.2f}  {'(FAVOR)' if sat['saldo_actual'] < 0 else '(PAGAR)'}
+  Eficiencia Pago a Cuenta:       {sat['eficiencia_pc']:>10.1f}%  (ideal=100%)
+"""
+            # Tabla de sensibilidad
+            texto += f"""
+  {'CUADRO DE SENSIBILIDAD - Variacion del Margen':^140}
+  {'-'*140}
+  {'Margen%':>8} | {'Precio Venta':>14} | {'Util. Neta':>12} | {'Regimen':>10} | {'IR':>12} | {'Pago Cta':>12} | {'Saldo':>12} | {'Ahorro Reg':>12} | {'Efic%':>7} | {'Nota':>12}
+  {'-'*140}
+"""
+            for s in sat['sensibilidad']:
+                nota = ""
+                if s['es_optimo']:
+                    nota = "<-- OPTIMO"
+                elif s['es_equilibrio']:
+                    nota = "<-- EQUILIB"
+                texto += f"  {s['margen']:>8.4f} | {s['precio_venta']:>14,.0f} | {s['utilidad_neta']:>12,.0f} | {s['regimen']:>10} | {s['ir']:>12,.0f} | {s['pago_cuenta']:>12,.0f} | {s['saldo']:>12,.0f} | {s['ahorro_regimen']:>12,.0f} | {s['eficiencia_pc']:>6.1f}% | {nota:>12}\n"
+
+            # Tabla sensibilidad 2D (tasa pago a cuenta)
+            texto += f"""
+  {'SENSIBILIDAD BIDIMENSIONAL - Tasa de Pago a Cuenta al Margen Optimo':^140}
+  {'-'*80}
+  {'Tasa PaC%':>10} | {'Pago Cuenta':>14} | {'IR':>12} | {'Saldo':>14} | {'Eficiencia%':>12}
+  {'-'*80}
+"""
+            for s2 in sat['sensibilidad_2d']:
+                texto += f"  {s2['tasa_pc']:>10.1f} | {s2['pago_cuenta']:>14,.0f} | {s2['ir']:>12,.0f} | {s2['saldo']:>14,.0f} | {s2['eficiencia']:>11.1f}%\n"
+
+        texto += f"""
+{'='*140}
+  INTERPRETACION ESTRATEGICA (TEORIA DE JUEGOS):
+{'='*140}
+  - Si Margen Optimo < Margen Equilibrio: El satelite genera SALDO A FAVOR (exceso de pagos a cuenta).
+    El costo de capital del saldo a favor es el costo de oportunidad del dinero inmovilizado.
+    Cuanto mayor el costo vs el limite, mayor el saldo a favor relativo.
+
+  - Si Margen Optimo > Margen Equilibrio: El satelite tiene saldo POR PAGAR en regularizacion.
+    Los pagos a cuenta se consumen completamente. Situacion financieramente eficiente.
+
+  - EQUILIBRIO DE NASH: El grupo optimiza cuando cada satelite equilibra:
+    Beneficio marginal del ahorro fiscal = Costo marginal del saldo a favor
+    Es decir, el punto donde un incremento adicional en el margen ya no genera
+    ahorro neto positivo despues de considerar el efecto del pago a cuenta.
+
+  - DILUSION DEL AHORRO: A medida que el margen se aleja del punto base optimo
+    (en cualquier direccion), el beneficio neto se reduce:
+      * Por debajo: Se pierde ahorro del regimen especial
+      * Por encima: Se excede el limite y se paga tasa general sobre el exceso
+{'='*140}
+"""
+        self.text_pagos_cuenta.insert(1.0, texto)
+
+    def _generar_graficos_pagos_cuenta(self):
+        """Genera graficos de analisis de pagos a cuenta."""
+        if self.canvas_pagos_cuenta:
+            self.canvas_pagos_cuenta.get_tk_widget().destroy()
+
+        d = self.datos_pagos_cuenta
+        n_sats = len(d['satelites'])
+
+        # Determinar layout de subplots
+        n_cols = min(2, n_sats)
+        n_rows = (n_sats + 1) // 2
+
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(14, 5 * n_rows), squeeze=False)
+        fig.suptitle('Analisis Pagos a Cuenta vs IR por Satelite', fontsize=14, fontweight='bold')
+
+        for idx, sat in enumerate(d['satelites']):
+            row = idx // n_cols
+            col = idx % n_cols
+            ax = axes[row][col]
+
+            sens = sat['sensibilidad']
+            margenes = [s['margen'] for s in sens]
+            irs = [s['ir'] for s in sens]
+            pacs = [s['pago_cuenta'] for s in sens]
+            saldos = [s['saldo'] for s in sens]
+            ahorros = [s['ahorro_regimen'] for s in sens]
+
+            # Graficar IR y Pago a Cuenta
+            ax.plot(margenes, irs, 'b-', linewidth=2, label='IR Anual', marker='o', markersize=3)
+            ax.plot(margenes, pacs, 'r--', linewidth=2, label=f'Pago a Cuenta ({d["tasa_pago_cuenta"]:.1f}%)', marker='s', markersize=3)
+            ax.fill_between(margenes, irs, pacs, where=[i < p for i, p in zip(irs, pacs)],
+                           alpha=0.15, color='red', label='Saldo a Favor')
+            ax.fill_between(margenes, irs, pacs, where=[i >= p for i, p in zip(irs, pacs)],
+                           alpha=0.15, color='green', label='Saldo por Pagar')
+
+            # Marcar punto optimo
+            ax.axvline(sat['margen_optimo_regimen'], color='green', linestyle=':', linewidth=1.5,
+                      label=f'Margen Optimo ({sat["margen_optimo_regimen"]:.2f}%)')
+
+            # Marcar equilibrio
+            if sat['margen_equilibrio'] is not None:
+                ax.axvline(sat['margen_equilibrio'], color='orange', linestyle='-.', linewidth=1.5,
+                          label=f'Equilibrio ({sat["margen_equilibrio"]:.2f}%)')
+
+            ax.set_xlabel('Margen (%)', fontsize=9)
+            ax.set_ylabel('Monto (S/)', fontsize=9)
+            ax.set_title(f'{sat["nombre"]}', fontsize=11, fontweight='bold')
+            ax.legend(fontsize=7, loc='upper left')
+            ax.grid(True, alpha=0.3)
+            ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1000:.0f}K'))
+
+        # Ocultar subplots vacios
+        for idx in range(n_sats, n_rows * n_cols):
+            row = idx // n_cols
+            col = idx % n_cols
+            axes[row][col].set_visible(False)
+
+        plt.tight_layout()
+
+        self.fig_pagos_cuenta = fig
+
+        self.canvas_pagos_cuenta = FigureCanvasTkAgg(fig, self.frame_pagos_graficos)
+        self.canvas_pagos_cuenta.draw()
+        self.canvas_pagos_cuenta.get_tk_widget().pack(fill='both', expand=True)
+
     def _estilo_header(self):
         """Retorna estilos para headers de tabla."""
         return {
@@ -1499,6 +1904,7 @@ permitido en el régimen especial, maximizando el ahorro tributario.
                 img_simulacion = self._guardar_figura_temp(self.fig_simulacion, 'simulacion', tmpdir)
                 img_sensibilidad = self._guardar_figura_temp(self.fig_sensibilidad, 'sensibilidad', tmpdir)
                 img_comparativo = self._guardar_figura_temp(self.fig_comparativo, 'comparativo', tmpdir)
+                img_pagos_cuenta = self._guardar_figura_temp(self.fig_pagos_cuenta, 'pagos_cuenta', tmpdir)
 
                 # ========================================================
                 # HOJA 1: RESUMEN EJECUTIVO
@@ -1862,13 +2268,297 @@ permitido en el régimen especial, maximizando el ahorro tributario.
                     ws6['B10'].font = Font(italic=True, color='999999', size=11)
 
                 # ========================================================
-                # HOJA 7: PARAMETROS
+                # HOJA 7: PAGOS A CUENTA Y SENSIBILIDAD
                 # ========================================================
-                ws7 = wb.create_sheet("PARAMETROS")
-                ws7.sheet_properties.tabColor = "95A5A6"
+                ws7 = wb.create_sheet("PAGOS A CUENTA")
+                ws7.sheet_properties.tabColor = "E67E22"
 
-                ws7.merge_cells('B2:D2')
+                ws7.merge_cells('B2:K2')
                 c = ws7['B2']
+                c.value = "ANALISIS DE PAGOS A CUENTA Y EQUILIBRIO FISCAL"
+                self._aplicar_estilo(c, self._estilo_titulo())
+                ws7.row_dimensions[2].height = 30
+
+                if self.datos_pagos_cuenta:
+                    dpc = self.datos_pagos_cuenta
+
+                    # Resumen consolidado
+                    ws7.merge_cells('B4:E4')
+                    c = ws7['B4']
+                    c.value = f"RESUMEN CONSOLIDADO (Tasa PaC: {dpc['tasa_pago_cuenta']:.1f}%)"
+                    self._aplicar_estilo(c, self._estilo_subtitulo())
+
+                    resumen_data = [
+                        ("Total Pagos a Cuenta", f"S/ {dpc['total_pagos_cuenta']:,.2f}"),
+                        ("Total IR Satelites", f"S/ {dpc['total_ir']:,.2f}"),
+                        ("Saldo Regularizacion", f"S/ {dpc['total_saldo']:,.2f}"),
+                        ("Tipo Saldo", "FAVOR" if dpc['total_saldo'] < 0 else "POR PAGAR"),
+                    ]
+                    for i, (lab, val) in enumerate(resumen_data):
+                        c = ws7.cell(row=5 + i, column=2)
+                        c.value = lab
+                        self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+                        c.alignment = Alignment(horizontal='left')
+                        c = ws7.cell(row=5 + i, column=3)
+                        c.value = val
+                        self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+                        if lab == "Saldo Regularizacion":
+                            color = 'CC0000' if dpc['total_saldo'] < 0 else '006600'
+                            c.font = Font(name='Calibri', bold=True, color=color, size=10)
+
+                    ws7.column_dimensions['B'].width = 24
+                    ws7.column_dimensions['C'].width = 22
+
+                    # Detalle por satelite
+                    fila_base = 10
+                    for idx_sat, sat_pc in enumerate(dpc['satelites']):
+                        ws7.merge_cells(f'B{fila_base}:K{fila_base}')
+                        c = ws7[f'B{fila_base}']
+                        c.value = f"{idx_sat + 1}. {sat_pc['nombre']} | Costo: {sat_pc['costo']:,.0f} | Gastos: {sat_pc['gastos']:,.0f}"
+                        self._aplicar_estilo(c, self._estilo_subtitulo())
+                        fila_base += 1
+
+                        # Info del satelite
+                        info_sat = [
+                            ("Margen Optimo (Regimen)", f"{sat_pc['margen_optimo_regimen']:.4f}%"),
+                            ("Margen Equilibrio (IR=PaC)", f"{sat_pc['margen_equilibrio']:.4f}%" if sat_pc['margen_equilibrio'] is not None else "N/A"),
+                            ("Pago a Cuenta Anual", f"S/ {sat_pc['pago_cuenta_actual']:,.2f}"),
+                            ("IR Anual", f"S/ {sat_pc['ir_actual']:,.2f}"),
+                            ("Saldo Regularizacion", f"S/ {sat_pc['saldo_actual']:,.2f}"),
+                            ("Eficiencia PaC", f"{sat_pc['eficiencia_pc']:.1f}%"),
+                        ]
+                        for i, (lab, val) in enumerate(info_sat):
+                            c = ws7.cell(row=fila_base + i, column=2)
+                            c.value = lab
+                            self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+                            c.alignment = Alignment(horizontal='left')
+                            c = ws7.cell(row=fila_base + i, column=3)
+                            c.value = val
+                            self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+
+                        fila_base += len(info_sat) + 1
+
+                        # Tabla de sensibilidad
+                        ws7.merge_cells(f'B{fila_base}:K{fila_base}')
+                        c = ws7[f'B{fila_base}']
+                        c.value = "Cuadro de Sensibilidad - Variacion del Margen"
+                        self._aplicar_estilo(c, {
+                            'font': Font(name='Calibri', bold=True, color='8B4513', size=10),
+                            'alignment': Alignment(horizontal='left')
+                        })
+                        fila_base += 1
+
+                        headers_sens = ["Margen%", "Precio Venta", "Util. Neta", "Regimen",
+                                       "IR", "Pago Cta", "Saldo", "Ahorro Reg.", "Efic%", "Nota"]
+                        for j, h in enumerate(headers_sens, 2):
+                            c = ws7.cell(row=fila_base, column=j)
+                            c.value = h
+                            self._aplicar_estilo(c, self._estilo_header())
+                        ws7.row_dimensions[fila_base].height = 24
+                        fila_base += 1
+
+                        for i, s in enumerate(sat_pc['sensibilidad']):
+                            nota = "OPTIMO" if s['es_optimo'] else ("EQUILIBRIO" if s['es_equilibrio'] else "")
+                            datos_fila = [
+                                s['margen'], s['precio_venta'], s['utilidad_neta'],
+                                s['regimen'], s['ir'], s['pago_cuenta'],
+                                s['saldo'], s['ahorro_regimen'], s['eficiencia_pc'], nota
+                            ]
+                            for j, val in enumerate(datos_fila, 2):
+                                c = ws7.cell(row=fila_base, column=j)
+                                if isinstance(val, (int, float)):
+                                    c.value = val
+                                    if j == 2:
+                                        c.number_format = '0.0000"%"'
+                                    elif j == 10:
+                                        c.number_format = '0.0"%"'
+                                    else:
+                                        c.number_format = '#,##0.00'
+                                else:
+                                    c.value = val
+                                estilo = self._estilo_celda(i % 2 == 0)
+                                self._aplicar_estilo(c, estilo)
+                                if s['es_optimo']:
+                                    c.font = Font(name='Calibri', bold=True, color='006600', size=10)
+                                elif s['es_equilibrio']:
+                                    c.font = Font(name='Calibri', bold=True, color='CC6600', size=10)
+                                if j == 8 and s['saldo'] < 0:
+                                    c.font = Font(name='Calibri', color='CC0000', size=10)
+                            fila_base += 1
+
+                        # Sensibilidad 2D (tasa pago a cuenta)
+                        fila_base += 1
+                        ws7.merge_cells(f'B{fila_base}:F{fila_base}')
+                        c = ws7[f'B{fila_base}']
+                        c.value = "Sensibilidad Bidimensional - Variacion Tasa de Pago a Cuenta al Margen Optimo"
+                        self._aplicar_estilo(c, {
+                            'font': Font(name='Calibri', bold=True, color='8B4513', size=10),
+                            'alignment': Alignment(horizontal='left')
+                        })
+                        fila_base += 1
+
+                        headers_2d = ["Tasa PaC%", "Pago Cuenta", "IR", "Saldo", "Eficiencia%"]
+                        for j, h in enumerate(headers_2d, 2):
+                            c = ws7.cell(row=fila_base, column=j)
+                            c.value = h
+                            self._aplicar_estilo(c, self._estilo_header())
+                        fila_base += 1
+
+                        for i, s2 in enumerate(sat_pc['sensibilidad_2d']):
+                            datos_2d = [s2['tasa_pc'], s2['pago_cuenta'], s2['ir'], s2['saldo'], s2['eficiencia']]
+                            for j, val in enumerate(datos_2d, 2):
+                                c = ws7.cell(row=fila_base, column=j)
+                                c.value = val
+                                if j in (3, 4, 5):
+                                    c.number_format = '#,##0.00'
+                                elif j == 2:
+                                    c.number_format = '0.0"%"'
+                                elif j == 6:
+                                    c.number_format = '0.0"%"'
+                                self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+                                if j == 5 and s2['saldo'] < 0:
+                                    c.font = Font(name='Calibri', color='CC0000', size=10)
+                            fila_base += 1
+
+                        fila_base += 2
+
+                    # Ajustar anchos para las columnas de sensibilidad
+                    for col_idx in range(2, 12):
+                        ws7.column_dimensions[get_column_letter(col_idx)].width = max(
+                            ws7.column_dimensions[get_column_letter(col_idx)].width or 0, 14)
+
+                    # Grafico pagos a cuenta
+                    if img_pagos_cuenta:
+                        self._insertar_imagen(ws7, img_pagos_cuenta, f'B{fila_base}', ancho_cm=36, alto_cm=20)
+                else:
+                    ws7['B4'] = "Ejecute el Analisis de Pagos a Cuenta para generar datos y graficos."
+                    ws7['B4'].font = Font(italic=True, color='999999', size=11)
+
+                # ========================================================
+                # HOJA 8: SENSIBILIDAD MARGENES POR SATELITE
+                # ========================================================
+                ws8 = wb.create_sheet("SENSIBILIDAD MARGENES")
+                ws8.sheet_properties.tabColor = "1ABC9C"
+
+                ws8.merge_cells('B2:K2')
+                c = ws8['B2']
+                c.value = "ANALISIS DE SENSIBILIDAD - MARGENES POR SATELITE"
+                self._aplicar_estilo(c, self._estilo_titulo())
+                ws8.row_dimensions[2].height = 30
+
+                ws8.merge_cells('B3:K3')
+                c = ws8['B3']
+                c.value = ("Muestra como se diluye el ahorro fiscal al alejarse del margen optimo. "
+                          "Desde la perspectiva de teoria de juegos, el punto optimo es el equilibrio de Nash "
+                          "donde ningun satelite puede mejorar su posicion unilateralmente.")
+                c.font = Font(name='Calibri', italic=True, color='666666', size=9)
+                c.alignment = Alignment(wrap_text=True)
+                ws8.row_dimensions[3].height = 30
+
+                fila_sens = 5
+
+                for idx_sat, sat in enumerate(r['satelites']):
+                    costo_s = sat['costo']
+                    gastos_s = sat['gastos_operativos']
+                    margen_opt = sat['margen_optimo'] / 100
+                    es_general_s = sat['regimen'].startswith('GENERAL')
+
+                    ws8.merge_cells(f'B{fila_sens}:K{fila_sens}')
+                    c = ws8[f'B{fila_sens}']
+                    c.value = f"{idx_sat + 1}. {sat['nombre']} - Margen Optimo: {sat['margen_optimo']:.4f}%"
+                    self._aplicar_estilo(c, self._estilo_subtitulo())
+                    fila_sens += 1
+
+                    # Generar variaciones de margen
+                    tasa_general_dec = r['parametros']['tasa_general'] / 100
+                    tasa_especial_dec = r['parametros']['tasa_especial'] / 100
+                    limite_util_val = r['parametros']['limite_utilidad']
+                    limite_ing_val = r['parametros']['limite_ingresos']
+                    tasa_pc_dec = self.TASA_PAGO_CUENTA.get() / 100
+
+                    m_min = max(0.001, margen_opt * 0.2)
+                    m_max_f = min(limite_ing_val / costo_s - 1, 1.0) if costo_s > 0 else 1.0
+                    m_max = min(margen_opt * 3.0, m_max_f)
+                    if m_max <= m_min:
+                        m_max = m_min + 0.10
+
+                    margenes_v = np.linspace(m_min, m_max, 15)
+                    if margen_opt not in margenes_v:
+                        margenes_v = np.sort(np.append(margenes_v, margen_opt))
+
+                    headers_s = ["Margen%", "Precio", "Util. Neta", "Regimen", "IR",
+                                "Pago Cta", "Saldo Reg.", "Ahorro Reg.", "Ahorro vs Base", "Nota"]
+                    for j, h in enumerate(headers_s, 2):
+                        c = ws8.cell(row=fila_sens, column=j)
+                        c.value = h
+                        self._aplicar_estilo(c, self._estilo_header())
+                    ws8.row_dimensions[fila_sens].height = 24
+                    fila_sens += 1
+
+                    # Ahorro base para comparar
+                    ahorro_base_sat = sat['ahorro_individual']
+
+                    for i, m in enumerate(margenes_v):
+                        precio_v = costo_s * (1 + m)
+                        util_b = costo_s * m
+                        util_n = max(0, util_b - gastos_s)
+
+                        if es_general_s:
+                            ir_v = util_n * tasa_general_dec
+                            reg_v = "General"
+                            ahorro_reg = 0
+                        elif util_n > limite_util_val or precio_v > limite_ing_val:
+                            if util_n > limite_util_val:
+                                ir_v = limite_util_val * tasa_especial_dec + (util_n - limite_util_val) * tasa_general_dec
+                                reg_v = "Mixto"
+                            else:
+                                ir_v = util_n * tasa_general_dec
+                                reg_v = "General*"
+                            ahorro_reg = util_n * tasa_general_dec - ir_v
+                        else:
+                            ir_v = util_n * tasa_especial_dec
+                            reg_v = "Especial"
+                            ahorro_reg = util_n * (tasa_general_dec - tasa_especial_dec)
+
+                        pac_v = tasa_pc_dec * precio_v
+                        saldo_v = ir_v - pac_v
+                        diff_vs_base = ahorro_reg - ahorro_base_sat
+                        es_opt = abs(m - margen_opt) < 0.0001
+                        nota_v = "OPTIMO" if es_opt else ""
+
+                        datos_v = [m * 100, precio_v, util_n, reg_v, ir_v, pac_v,
+                                  saldo_v, ahorro_reg, diff_vs_base, nota_v]
+                        for j, val in enumerate(datos_v, 2):
+                            c = ws8.cell(row=fila_sens, column=j)
+                            if isinstance(val, (int, float)):
+                                c.value = val
+                                if j == 2:
+                                    c.number_format = '0.0000"%"'
+                                else:
+                                    c.number_format = '#,##0.00'
+                            else:
+                                c.value = val
+                            self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+                            if es_opt:
+                                c.font = Font(name='Calibri', bold=True, color='006600', size=10)
+                            if j == 10 and isinstance(val, (int, float)) and val < 0:
+                                c.font = Font(name='Calibri', color='CC0000', size=10)
+                        fila_sens += 1
+
+                    fila_sens += 2
+
+                for col_idx in range(2, 12):
+                    ws8.column_dimensions[get_column_letter(col_idx)].width = max(
+                        ws8.column_dimensions[get_column_letter(col_idx)].width or 0, 14)
+
+                # ========================================================
+                # HOJA 9: PARAMETROS
+                # ========================================================
+                ws9 = wb.create_sheet("PARAMETROS")
+                ws9.sheet_properties.tabColor = "95A5A6"
+
+                ws9.merge_cells('B2:D2')
+                c = ws9['B2']
                 c.value = "PARAMETROS TRIBUTARIOS UTILIZADOS"
                 self._aplicar_estilo(c, self._estilo_titulo())
 
@@ -1877,6 +2567,7 @@ permitido en el régimen especial, maximizando el ahorro tributario.
                     ("Tasa Regimen General", f"{r['parametros']['tasa_general']:.2f}%"),
                     ("Tasa Regimen Especial", f"{r['parametros']['tasa_especial']:.2f}%"),
                     ("Diferencial de Tasas", f"{r['parametros']['tasa_general'] - r['parametros']['tasa_especial']:.2f} pp"),
+                    ("Tasa Pago a Cuenta IR", f"{self.TASA_PAGO_CUENTA.get():.2f}%"),
                     ("Limite Utilidad Especial", f"S/ {r['parametros']['limite_utilidad']:,.2f}"),
                     ("Limite Ingresos Especial", f"S/ {r['parametros']['limite_ingresos']:,.2f}"),
                     ("N Empresas Satelites", f"{len(r['satelites'])}"),
@@ -1885,38 +2576,44 @@ permitido en el régimen especial, maximizando el ahorro tributario.
 
                 headers_p = ["Parametro", "Valor"]
                 for j, h in enumerate(headers_p, 2):
-                    c = ws7.cell(row=4, column=j)
+                    c = ws9.cell(row=4, column=j)
                     c.value = h
                     self._aplicar_estilo(c, self._estilo_header())
-                ws7.column_dimensions['B'].width = 30
-                ws7.column_dimensions['C'].width = 25
+                ws9.column_dimensions['B'].width = 30
+                ws9.column_dimensions['C'].width = 25
 
                 for i, (lab, val) in enumerate(params):
                     fila = 5 + i
-                    c = ws7.cell(row=fila, column=2)
+                    c = ws9.cell(row=fila, column=2)
                     c.value = lab
                     self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
                     c.alignment = Alignment(horizontal='left')
-                    c = ws7.cell(row=fila, column=3)
+                    c = ws9.cell(row=fila, column=3)
                     c.value = val
                     self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
 
-                # Fórmula
+                # Formulas
                 fila_f = 5 + len(params) + 2
-                ws7.merge_cells(f'B{fila_f}:D{fila_f}')
-                c = ws7[f'B{fila_f}']
-                c.value = "FORMULA APLICADA"
+                ws9.merge_cells(f'B{fila_f}:D{fila_f}')
+                c = ws9[f'B{fila_f}']
+                c.value = "FORMULAS APLICADAS"
                 self._aplicar_estilo(c, self._estilo_subtitulo())
 
-                ws7.merge_cells(f'B{fila_f+1}:D{fila_f+1}')
-                c = ws7[f'B{fila_f+1}']
-                c.value = "m* = (Limite_Utilidad + Gastos_Operativos) / Costos"
-                c.font = Font(name='Consolas', size=12, bold=True, color='1F4E79')
+                ws9.merge_cells(f'B{fila_f+1}:D{fila_f+1}')
+                c = ws9[f'B{fila_f+1}']
+                c.value = "Margen Optimo: m* = (Limite_Utilidad + Gastos_Operativos) / Costos"
+                c.font = Font(name='Consolas', size=11, bold=True, color='1F4E79')
 
-                ws7.merge_cells(f'B{fila_f+3}:D{fila_f+3}')
-                c = ws7[f'B{fila_f+3}']
-                c.value = ("Esta formula garantiza que la utilidad neta (despues de gastos) alcance "
-                          "exactamente el limite permitido en el regimen especial, maximizando el ahorro tributario.")
+                ws9.merge_cells(f'B{fila_f+2}:D{fila_f+2}')
+                c = ws9[f'B{fila_f+2}']
+                c.value = "Margen Equilibrio: m_eq = (t_pc * C + t_esp * G) / (C * (t_esp - t_pc))"
+                c.font = Font(name='Consolas', size=11, bold=True, color='E67E22')
+
+                ws9.merge_cells(f'B{fila_f+4}:D{fila_f+4}')
+                c = ws9[f'B{fila_f+4}']
+                c.value = ("La formula de margen optimo garantiza que la utilidad neta alcance exactamente "
+                          "el limite del regimen especial. La formula de equilibrio determina el punto "
+                          "donde el IR iguala a los pagos a cuenta, eliminando el saldo a favor.")
                 c.font = Font(name='Calibri', italic=True, color='666666', size=9)
                 c.alignment = Alignment(wrap_text=True)
 
@@ -1933,7 +2630,9 @@ permitido en el régimen especial, maximizando el ahorro tributario.
                 f"  4. Simulacion Monte Carlo{'  [OK]' if img_simulacion else '  [Pendiente]'}\n"
                 f"  5. Sensibilidad{'  [OK]' if img_sensibilidad else '  [Pendiente]'}\n"
                 f"  6. Comparativo{'  [OK]' if img_comparativo else '  [Pendiente]'}\n"
-                f"  7. Parametros\n\n"
+                f"  7. Pagos a Cuenta{'  [OK]' if self.datos_pagos_cuenta else '  [Pendiente]'}\n"
+                f"  8. Sensibilidad Margenes\n"
+                f"  9. Parametros\n\n"
                 f"Archivo: {path}"
             )
         except Exception as e:
