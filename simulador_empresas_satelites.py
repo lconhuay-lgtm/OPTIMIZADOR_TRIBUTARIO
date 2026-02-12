@@ -1621,8 +1621,9 @@ LOG-NORMAL FIT:
             escenarios.append({
                 'nombre': 'Actual',
                 'ahorro': self.resultados['grupo']['ahorro_tributario'],
-                'tasa_efectiva': self.resultados['grupo']['impuesto_total'] / 
-                               (self.resultados['matriz']['nueva_utilidad'] + self.resultados['grupo']['total_utilidad_satelites']) * 100,
+                'tasa_efectiva': (self.resultados['grupo']['impuesto_total'] /
+                               (self.resultados['matriz']['nueva_utilidad'] + self.resultados['grupo']['total_utilidad_satelites']) * 100)
+                               if (self.resultados['matriz']['nueva_utilidad'] + self.resultados['grupo']['total_utilidad_satelites']) != 0 else 0,
                 'satelites': len(self.resultados['satelites'])
             })
             
@@ -3235,20 +3236,22 @@ LOG-NORMAL FIT:
                             c.font = Font(name='Calibri', bold=True, color='006600', size=11)
 
                     # Ajuste Log-Normal
+                    fila_ln_ws4 = fila_h + 1 + len(hipotesis_data) + 1  # default position
+                    ln_data_ws4 = []
                     if ds.get('ln_ajustado'):
-                        fila_ln = fila_h + 1 + len(hipotesis_data) + 1
-                        ws4.merge_cells(f'B{fila_ln}:C{fila_ln}')
-                        c = ws4[f'B{fila_ln}']
+                        fila_ln_ws4 = fila_h + 1 + len(hipotesis_data) + 1
+                        ws4.merge_cells(f'B{fila_ln_ws4}:C{fila_ln_ws4}')
+                        c = ws4[f'B{fila_ln_ws4}']
                         c.value = "AJUSTE DISTRIBUCION LOG-NORMAL"
                         self._aplicar_estilo(c, self._estilo_subtitulo())
-                        ln_data = [
+                        ln_data_ws4 = [
                             ("Distribucion", "Log-Normal"),
-                            ("Shape (s)", f"{ds['ln_shape']:.4f}"),
-                            ("Location", f"{ds['ln_loc']:.4f}"),
-                            ("Scale", f"S/ {ds['ln_scale']:,.0f}"),
+                            ("Shape (s)", f"{ds.get('ln_shape', 0):.4f}"),
+                            ("Location", f"{ds.get('ln_loc', 0):.4f}"),
+                            ("Scale", f"S/ {ds.get('ln_scale', 0):,.0f}"),
                         ]
-                        for i, (lab, val) in enumerate(ln_data):
-                            f = fila_ln + 1 + i
+                        for i, (lab, val) in enumerate(ln_data_ws4):
+                            f = fila_ln_ws4 + 1 + i
                             c = ws4.cell(row=f, column=2)
                             c.value = lab
                             self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
@@ -3259,8 +3262,8 @@ LOG-NORMAL FIT:
 
                     # Notas de configuracion matriz
                     if ds.get('var_matriz_costos') or ds.get('var_matriz_ingresos'):
-                        if ds.get('ln_ajustado'):
-                            fila_nota = fila_ln + 1 + len(ln_data) + 1
+                        if ds.get('ln_ajustado') and ln_data_ws4:
+                            fila_nota = fila_ln_ws4 + 1 + len(ln_data_ws4) + 1
                         else:
                             fila_nota = fila_h + 1 + len(hipotesis_data) + 1
                         ws4.merge_cells(f'B{fila_nota}:C{fila_nota}')
@@ -3269,9 +3272,9 @@ LOG-NORMAL FIT:
                         self._aplicar_estilo(c, self._estilo_subtitulo())
                         mat_notas = []
                         if ds.get('var_matriz_costos'):
-                            mat_notas.append(("Var. Costos Matriz", f"+/-{ds['pct_var_costos']:.1f}%"))
+                            mat_notas.append(("Var. Costos Matriz", f"+/-{ds.get('pct_var_costos', 0):.1f}%"))
                         if ds.get('var_matriz_ingresos'):
-                            mat_notas.append(("Var. Ingresos Matriz", f"+/-{ds['pct_var_ingresos']:.1f}%"))
+                            mat_notas.append(("Var. Ingresos Matriz", f"+/-{ds.get('pct_var_ingresos', 0):.1f}%"))
                         mat_notas.append(("Distribucion", ds.get('distribucion', 'Log-normal')))
                         mat_notas.append(("Correlacion (rho)", f"{ds.get('rho', 0):.2f}"))
                         for i, (lab, val) in enumerate(mat_notas):
@@ -3994,7 +3997,7 @@ LOG-NORMAL FIT:
                 c.value = "SIMULACION MONTE CARLO - EQUILIBRIO FINANCIERO"
                 self._aplicar_estilo(c, self._estilo_titulo())
 
-                if self.datos_equilibrio_sim:
+                if self.datos_equilibrio_sim and isinstance(self.datos_equilibrio_sim, dict) and 'margen_media' in self.datos_equilibrio_sim:
                     deq = self.datos_equilibrio_sim
 
                     ws10.merge_cells('B4:C4')
@@ -4003,27 +4006,27 @@ LOG-NORMAL FIT:
                     self._aplicar_estilo(c, self._estilo_subtitulo())
 
                     stats_eq_data = [
-                        ("Iteraciones", f"{deq['n_sim']:,}"),
-                        ("Variabilidad", f"+/-{deq['variabilidad']:.1f}%"),
+                        ("Iteraciones", f"{deq.get('n_sim', 0):,}"),
+                        ("Variabilidad", f"+/-{deq.get('variabilidad', 0):.1f}%"),
                         ("", ""),
                         ("--- MARGEN EQUILIBRIO ---", ""),
-                        ("Media", f"{deq['margen_media']:.4f}%"),
-                        ("Mediana", f"{deq['margen_mediana']:.4f}%"),
-                        ("Desv. Estandar", f"{deq['margen_std']:.4f}%"),
-                        ("Percentil 5", f"{deq['margen_p5']:.4f}%"),
-                        ("Percentil 95", f"{deq['margen_p95']:.4f}%"),
-                        (f"IC {deq['conf_nivel']:.0f}% Inferior", f"{deq['ic_margen_lower']:.4f}%"),
-                        (f"IC {deq['conf_nivel']:.0f}% Superior", f"{deq['ic_margen_upper']:.4f}%"),
+                        ("Media", f"{deq.get('margen_media', 0):.4f}%"),
+                        ("Mediana", f"{deq.get('margen_mediana', 0):.4f}%"),
+                        ("Desv. Estandar", f"{deq.get('margen_std', 0):.4f}%"),
+                        ("Percentil 5", f"{deq.get('margen_p5', 0):.4f}%"),
+                        ("Percentil 95", f"{deq.get('margen_p95', 0):.4f}%"),
+                        (f"IC {deq.get('conf_nivel', 95):.0f}% Inferior", f"{deq.get('ic_margen_lower', 0):.4f}%"),
+                        (f"IC {deq.get('conf_nivel', 95):.0f}% Superior", f"{deq.get('ic_margen_upper', 0):.4f}%"),
                         ("", ""),
                         ("--- AHORRO EN EQUILIBRIO ---", ""),
-                        ("Media", f"S/ {deq['ahorro_media']:,.0f}"),
-                        ("Mediana", f"S/ {deq['ahorro_mediana']:,.0f}"),
-                        ("Desv. Estandar", f"S/ {deq['ahorro_std']:,.0f}"),
-                        ("Percentil 5", f"S/ {deq['ahorro_p5']:,.0f}"),
-                        ("Percentil 95", f"S/ {deq['ahorro_p95']:,.0f}"),
-                        (f"IC {deq['conf_nivel']:.0f}% Inferior", f"S/ {deq['ic_ahorro_lower']:,.0f}"),
-                        (f"IC {deq['conf_nivel']:.0f}% Superior", f"S/ {deq['ic_ahorro_upper']:,.0f}"),
-                        ("P-Valor (Bootstrap)", f"{deq['p_valor_boot']:.4e}"),
+                        ("Media", f"S/ {deq.get('ahorro_media', 0):,.0f}"),
+                        ("Mediana", f"S/ {deq.get('ahorro_mediana', 0):,.0f}"),
+                        ("Desv. Estandar", f"S/ {deq.get('ahorro_std', 0):,.0f}"),
+                        ("Percentil 5", f"S/ {deq.get('ahorro_p5', 0):,.0f}"),
+                        ("Percentil 95", f"S/ {deq.get('ahorro_p95', 0):,.0f}"),
+                        (f"IC {deq.get('conf_nivel', 95):.0f}% Inferior", f"S/ {deq.get('ic_ahorro_lower', 0):,.0f}"),
+                        (f"IC {deq.get('conf_nivel', 95):.0f}% Superior", f"S/ {deq.get('ic_ahorro_upper', 0):,.0f}"),
+                        ("P-Valor (Bootstrap)", f"{deq.get('p_valor_boot', 1):.4e}"),
                     ]
                     for i, (lab, val) in enumerate(stats_eq_data):
                         fila = 5 + i
@@ -4044,13 +4047,13 @@ LOG-NORMAL FIT:
                     c.value = "DISTRIBUCION DE REGIMENES EN SIMULACION"
                     self._aplicar_estilo(c, self._estilo_subtitulo())
 
-                    reg = deq['regimenes']
-                    total_reg = sum(reg.values())
+                    reg = deq.get('regimenes', {"Especial": 0, "Mixto": 0, "General": 0, "Sin_solucion": 0})
+                    total_reg = sum(reg.values()) if reg else 1
                     reg_data = [
-                        ("Especial Puro", f"{reg['Especial']:,} ({reg['Especial']/max(1,total_reg)*100:.1f}%)"),
-                        ("Mixto MYPE", f"{reg['Mixto']:,} ({reg['Mixto']/max(1,total_reg)*100:.1f}%)"),
-                        ("General Puro", f"{reg['General']:,} ({reg['General']/max(1,total_reg)*100:.1f}%)"),
-                        ("Sin solucion", f"{reg['Sin_solucion']:,} ({reg['Sin_solucion']/max(1,total_reg)*100:.1f}%)"),
+                        ("Especial Puro", f"{reg.get('Especial', 0):,} ({reg.get('Especial', 0)/max(1,total_reg)*100:.1f}%)"),
+                        ("Mixto MYPE", f"{reg.get('Mixto', 0):,} ({reg.get('Mixto', 0)/max(1,total_reg)*100:.1f}%)"),
+                        ("General Puro", f"{reg.get('General', 0):,} ({reg.get('General', 0)/max(1,total_reg)*100:.1f}%)"),
+                        ("Sin solucion", f"{reg.get('Sin_solucion', 0):,} ({reg.get('Sin_solucion', 0)/max(1,total_reg)*100:.1f}%)"),
                     ]
                     for i, (lab, val) in enumerate(reg_data):
                         f = fila_r + 1 + i
@@ -4063,17 +4066,19 @@ LOG-NORMAL FIT:
                         self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
 
                     # Log-Normal fit
+                    fila_ln = fila_r + 1 + len(reg_data) + 1  # default position
+                    ln_data_ws10 = []
                     if deq.get('ln_ajustado'):
                         fila_ln = fila_r + 1 + len(reg_data) + 1
                         ws10.merge_cells(f'B{fila_ln}:C{fila_ln}')
                         c = ws10[f'B{fila_ln}']
                         c.value = "AJUSTE LOG-NORMAL (Margen Equilibrio)"
                         self._aplicar_estilo(c, self._estilo_subtitulo())
-                        ln_data = [
-                            ("Shape (s)", f"{deq['ln_shape']:.4f}"),
-                            ("Scale", f"{deq['ln_scale']:.4f}"),
+                        ln_data_ws10 = [
+                            ("Shape (s)", f"{deq.get('ln_shape', 0):.4f}"),
+                            ("Scale", f"{deq.get('ln_scale', 0):.4f}"),
                         ]
-                        for i, (lab, val) in enumerate(ln_data):
+                        for i, (lab, val) in enumerate(ln_data_ws10):
                             f = fila_ln + 1 + i
                             c = ws10.cell(row=f, column=2)
                             c.value = lab
@@ -4085,17 +4090,17 @@ LOG-NORMAL FIT:
                     # Notas de configuracion matriz
                     if deq.get('var_matriz_costos') or deq.get('var_matriz_ingresos'):
                         fila_mat = fila_r + 1 + len(reg_data) + 1
-                        if deq.get('ln_ajustado'):
-                            fila_mat = fila_ln + 1 + 2 + 1
+                        if deq.get('ln_ajustado') and ln_data_ws10:
+                            fila_mat = fila_ln + 1 + len(ln_data_ws10) + 1
                         ws10.merge_cells(f'B{fila_mat}:C{fila_mat}')
                         c = ws10[f'B{fila_mat}']
                         c.value = "CONFIGURACION VARIABILIDAD MATRIZ"
                         self._aplicar_estilo(c, self._estilo_subtitulo())
                         mat_notas = []
                         if deq.get('var_matriz_costos'):
-                            mat_notas.append(("Var. Costos Matriz", f"+/-{deq['pct_var_costos']:.1f}%"))
+                            mat_notas.append(("Var. Costos Matriz", f"+/-{deq.get('pct_var_costos', 0):.1f}%"))
                         if deq.get('var_matriz_ingresos'):
-                            mat_notas.append(("Var. Ingresos Matriz", f"+/-{deq['pct_var_ingresos']:.1f}%"))
+                            mat_notas.append(("Var. Ingresos Matriz", f"+/-{deq.get('pct_var_ingresos', 0):.1f}%"))
                         mat_notas.append(("Distribucion", deq.get('distribucion', 'Log-normal')))
                         mat_notas.append(("Correlacion (rho)", f"{deq.get('rho', 0):.2f}"))
                         for i, (lab, val) in enumerate(mat_notas):
@@ -4137,7 +4142,9 @@ LOG-NORMAL FIT:
                 f"Archivo: {path}"
             )
         except Exception as e:
-            messagebox.showerror("Error de Exportacion", f"No se pudo generar el Excel:\n{str(e)}")
+            import traceback
+            tb = traceback.format_exc()
+            messagebox.showerror("Error de Exportacion", f"No se pudo generar el Excel:\n{str(e)}\n\nDetalle:\n{tb[-500:]}")
     
     def copiar_resultados(self):
         try:
