@@ -46,6 +46,8 @@ class OptimizadorPro:
         self.datos_simulacion = None  # Estadísticas Monte Carlo
         self.fig_pagos_cuenta = None
         self.datos_pagos_cuenta = None
+        self.fig_equilibrio_sim = None
+        self.datos_equilibrio_sim = None
         self.crear_interfaz()
         
     def crear_interfaz(self):
@@ -418,7 +420,15 @@ class OptimizadorPro:
         self.entry_pasos_sens_pc.grid(row=0, column=3, padx=5, pady=5)
 
         ttk.Button(frame_config_pc, text="Ejecutar Analisis Pagos a Cuenta y Sensibilidad",
-                   command=self.analizar_pagos_cuenta).grid(row=1, column=0, columnspan=4, pady=10)
+                   command=self.analizar_pagos_cuenta).grid(row=1, column=0, columnspan=2, pady=10)
+
+        ttk.Label(frame_config_pc, text="Sim. Equilibrio (N):").grid(row=1, column=2, sticky='w', padx=10)
+        self.entry_n_sim_eq = ttk.Entry(frame_config_pc, width=12)
+        self.entry_n_sim_eq.insert(0, "5000")
+        self.entry_n_sim_eq.grid(row=1, column=3, padx=5, pady=5)
+
+        ttk.Button(frame_config_pc, text="Simular Equilibrio (Monte Carlo)",
+                   command=self.simular_equilibrio_financiero).grid(row=2, column=0, columnspan=4, pady=10)
 
         # Texto de resultados
         frame_texto_pc = ttk.LabelFrame(scrollable_frame, text="Analisis Detallado por Satelite", padding=10)
@@ -437,6 +447,12 @@ class OptimizadorPro:
         self.frame_pagos_graficos = ttk.LabelFrame(scrollable_frame, text="Visualizacion Pagos a Cuenta vs IR", padding=10)
         self.frame_pagos_graficos.grid(row=2, column=0, padx=10, pady=5, sticky='ew')
         self.canvas_pagos_cuenta = None
+
+        # Graficos simulacion equilibrio
+        self.frame_eq_sim_graficos = ttk.LabelFrame(scrollable_frame,
+                                                     text="Simulacion Monte Carlo - Equilibrio Financiero", padding=10)
+        self.frame_eq_sim_graficos.grid(row=3, column=0, padx=10, pady=5, sticky='ew')
+        self.canvas_equilibrio_sim = None
 
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
@@ -948,209 +964,268 @@ permitido en el régimen especial, maximizando el ahorro tributario.
     def ejecutar_simulacion(self):
         try:
             if not hasattr(self, 'resultados'):
-                messagebox.showwarning("Advertencia", "Primero debe calcular los márgenes óptimos")
+                messagebox.showwarning("Advertencia", "Primero debe calcular los margenes optimos")
                 return
-            
+
             n_sim = int(self.entry_num_sim.get())
             variabilidad = float(self.entry_variabilidad.get()) / 100
-            
+
             ahorros = []
             tasa_gral = self.resultados['parametros']['tasa_general'] / 100
             tasa_esp = self.resultados['parametros']['tasa_especial'] / 100
             limite_util = self.resultados['parametros']['limite_utilidad']
-            
+
             for _ in range(n_sim):
                 satelites_sim = []
                 for sat in self.resultados['satelites']:
-                    # Generar variación en costos
-                    factor = np.random.normal(1, variabilidad/3)
-                    costo_sim = sat['costo'] * max(0.5, factor)
-                    gastos_sim = sat['gastos_operativos'] * max(0.5, factor)
-                    
-                    # Determinar régimen
+                    # Variacion log-normal (factor multiplicativo)
+                    sigma_ln = np.sqrt(np.log(1 + (variabilidad / 3) ** 2))
+                    mu_ln = -0.5 * sigma_ln ** 2
+                    factor = np.random.lognormal(mu_ln, sigma_ln)
+                    costo_sim = sat['costo'] * factor
+                    gastos_sim = sat['gastos_operativos'] * factor
+
                     if sat['regimen'].startswith('GENERAL'):
                         if gastos_sim > 0:
-                            # Punto equilibrio
                             margen = gastos_sim / costo_sim
                             utilidad_neta = 0
                             impuesto = 0
                         else:
-                            # Sin margen
                             margen = 0
                             utilidad_neta = 0
                             impuesto = 0
                     else:
-                        # Régimen especial
                         margen = (limite_util + gastos_sim) / costo_sim
                         utilidad_bruta = costo_sim * margen
                         utilidad_neta = utilidad_bruta - gastos_sim
-                        
+
                         if utilidad_neta <= limite_util:
                             impuesto = utilidad_neta * tasa_esp
                         else:
                             impuesto = limite_util * tasa_esp + (utilidad_neta - limite_util) * tasa_gral
-                    
+
                     precio_venta = costo_sim * (1 + margen)
-                    
+
                     satelites_sim.append({
                         'utilidad': utilidad_neta,
                         'impuesto': impuesto,
                         'precio_venta': precio_venta,
                         'costo': costo_sim
                     })
-                
-                total_compras = sum([s['precio_venta'] for s in satelites_sim])
-                total_costos_sat = sum([s['costo'] for s in satelites_sim])
-                
+
+                total_compras = sum(s['precio_venta'] for s in satelites_sim)
+                total_costos_sat = sum(s['costo'] for s in satelites_sim)
+
                 nueva_utilidad_matriz = self.resultados['matriz']['utilidad_sin_estructura'] - total_compras + total_costos_sat
-                impuesto_matriz = nueva_utilidad_matriz * tasa_gral
-                
-                impuesto_total = impuesto_matriz + sum([s['impuesto'] for s in satelites_sim])
+                impuesto_matriz = max(0, nueva_utilidad_matriz) * tasa_gral
+
+                impuesto_total = impuesto_matriz + sum(s['impuesto'] for s in satelites_sim)
                 ahorro = self.resultados['matriz']['impuesto_sin_estructura'] - impuesto_total
-                
+
                 ahorros.append(ahorro)
-            
+
             ahorros = np.array(ahorros)
-            
-            # --- CÁLCULOS CIENTÍFICOS ---
-            ahorros = np.array(ahorros)
+
+            # --- CALCULOS ESTADISTICOS AVANZADOS ---
             media = np.mean(ahorros)
+            mediana = np.median(ahorros)
+            std = np.std(ahorros, ddof=1)
+            cv = (std / media * 100) if media != 0 else 0
             conf_val = self.CONF_NIVEL.get() / 100
             alfa_val = self.ALFA_SIG.get()
-            
-            # Prueba de Hipótesis: ¿El ahorro es > 0?
-            t_stat, p_value = stats.ttest_1samp(ahorros, 0)
-            
-            # Intervalo de Confianza dinámico basado en tu input
-            sem = stats.sem(ahorros)
-            ic_rango = stats.t.interval(conf_val, len(ahorros)-1, loc=media, scale=sem)
-            
-            decision = "RECHAZAR H0 (Ahorro Real)" if p_value < alfa_val else "ACEPTAR H0 (Incierto)"
 
-            stats_text = f"""
-    RESULTADOS ESTADÍSTICOS:
-    {'='*30}
-    Ahorro Medio:  {media:>15,.2f}
-    Confianza:     {conf_val*100:>14.1f}%
-    Intervalo:     [{ic_rango[0]:,.0f} - {ic_rango[1]:,.0f}]
-    
-    PRUEBA DE HIPÓTESIS:
-    Alfa:          {alfa_val:>15.3f}
-    P-Valor:       {p_value:>15.4e}
-    Resultado:     {decision}
-    """
-                                  
-            
+            # Bootstrap percentil para IC y p-valor no parametrico
+            n_boot = 5000
+            boot_medias = np.array([
+                np.mean(np.random.choice(ahorros, size=len(ahorros), replace=True))
+                for _ in range(n_boot)
+            ])
+            alpha_boot = 1 - conf_val
+            ic_boot_lower = np.percentile(boot_medias, 100 * alpha_boot / 2)
+            ic_boot_upper = np.percentile(boot_medias, 100 * (1 - alpha_boot / 2))
+
+            # P-valor no parametrico: proporcion de bootstrap medias <= 0
+            p_valor_boot = np.mean(boot_medias <= 0)
+            p_valor_boot = max(p_valor_boot, 1 / n_boot)  # floor
+
+            # T-test clasico (referencia)
+            t_stat, p_value_t = stats.ttest_1samp(ahorros, 0)
+
+            decision = "RECHAZAR H0 (Ahorro Significativo)" if p_valor_boot < alfa_val else "NO RECHAZAR H0 (Incierto)"
+
+            # Ajuste Log-Normal
+            ahorros_positivos = ahorros[ahorros > 0]
+            ln_ajustado = False
+            ln_shape = ln_loc = ln_scale = 0
+            if len(ahorros_positivos) > 50:
+                try:
+                    ln_shape, ln_loc, ln_scale = stats.lognorm.fit(ahorros_positivos, floc=0)
+                    ln_ajustado = True
+                except Exception:
+                    pass
+
+            # --- VISUALIZACION MEJORADA: 2x2 ---
             if self.canvas_simulacion:
                 self.canvas_simulacion.get_tk_widget().destroy()
-            
+
             fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(14, 10))
-            fig.suptitle(f'Simulación Monte Carlo ({n_sim:,} iteraciones)', fontsize=16, fontweight='bold')
-            
-            # Histograma
-            ax1.hist(ahorros, bins=50, color='#3498db', alpha=0.7, edgecolor='black', density=True)
-            ax1.axvline(np.mean(ahorros), color='red', linestyle='--', linewidth=2, label=f'Media: {np.mean(ahorros):,.0f}')
-            ax1.axvline(np.median(ahorros), color='green', linestyle='--', linewidth=2, label=f'Mediana: {np.median(ahorros):,.0f}')
-            ax1.set_xlabel('Ahorro Tributario', fontsize=10)
+            fig.suptitle(f'Simulacion Monte Carlo ({n_sim:,} iter.) - Analisis de Riesgo',
+                         fontsize=14, fontweight='bold')
+
+            # [1] Histograma + curva Log-Normal ajustada
+            ax1.hist(ahorros, bins=60, color='#3498db', alpha=0.6, edgecolor='black',
+                     density=True, label='Datos simulados')
+            if ln_ajustado:
+                x_ln = np.linspace(max(0.01, ahorros.min()), ahorros.max(), 300)
+                pdf_ln = stats.lognorm.pdf(x_ln, ln_shape, ln_loc, ln_scale)
+                ax1.plot(x_ln, pdf_ln, 'r-', linewidth=2,
+                         label=f'Log-Normal (s={ln_shape:.3f})')
+            ax1.axvline(media, color='orange', linestyle='--', linewidth=2,
+                        label=f'Media: {media:,.0f}')
+            ax1.axvline(mediana, color='green', linestyle=':', linewidth=2,
+                        label=f'Mediana: {mediana:,.0f}')
+            ax1.fill_betweenx([0, ax1.get_ylim()[1] if ax1.get_ylim()[1] > 0 else 0.001],
+                              ic_boot_lower, ic_boot_upper, alpha=0.15, color='red',
+                              label=f'IC {conf_val*100:.0f}% Boot')
+            ax1.set_xlabel('Ahorro Tributario (S/)', fontsize=10)
             ax1.set_ylabel('Densidad', fontsize=10)
-            ax1.set_title('Distribución de Ahorro', fontsize=12, fontweight='bold')
-            ax1.legend()
+            ax1.set_title('Histograma + Ajuste Log-Normal', fontsize=11, fontweight='bold')
+            ax1.legend(fontsize=7, loc='upper right')
             ax1.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1000:.0f}K'))
             ax1.grid(alpha=0.3)
-            
-            # Box plot
-            bp = ax2.boxplot(ahorros, vert=True, patch_artist=True, widths=0.5)
+
+            # [2] Q-Q Plot (Log-Normal)
+            if ln_ajustado and len(ahorros_positivos) > 10:
+                ahorros_sorted = np.sort(ahorros_positivos)
+                n_qq = len(ahorros_sorted)
+                teoricos = stats.lognorm.ppf(
+                    (np.arange(1, n_qq + 1) - 0.5) / n_qq,
+                    ln_shape, ln_loc, ln_scale
+                )
+                ax2.scatter(teoricos, ahorros_sorted, s=4, alpha=0.4, color='#2E75B6')
+                lim_min = min(teoricos.min(), ahorros_sorted.min())
+                lim_max = max(teoricos.max(), ahorros_sorted.max())
+                ax2.plot([lim_min, lim_max], [lim_min, lim_max], 'r--', linewidth=1.5,
+                         label='Linea 45')
+                ax2.set_xlabel('Cuantiles Teoricos (Log-Normal)', fontsize=10)
+                ax2.set_ylabel('Cuantiles Observados', fontsize=10)
+                ax2.set_title('Q-Q Plot Log-Normal', fontsize=11, fontweight='bold')
+                ax2.legend(fontsize=8)
+            else:
+                sorted_ahorros = np.sort(ahorros)
+                cumulative = np.arange(1, len(sorted_ahorros) + 1) / len(sorted_ahorros)
+                ax2.plot(sorted_ahorros, cumulative * 100, color='#9b59b6', linewidth=2)
+                ax2.axhline(50, color='red', linestyle='--', alpha=0.5, label='Mediana')
+                ax2.axhline(95, color='green', linestyle='--', alpha=0.5, label='P95')
+                ax2.set_xlabel('Ahorro Tributario', fontsize=10)
+                ax2.set_ylabel('Prob. Acumulada (%)', fontsize=10)
+                ax2.set_title('CDF (sin ajuste Log-Normal)', fontsize=11, fontweight='bold')
+                ax2.legend(fontsize=8)
+            ax2.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1000:.0f}K'))
+            ax2.grid(alpha=0.3)
+
+            # [3] Violin + Boxplot
+            parts = ax3.violinplot(ahorros, positions=[1], showmeans=True,
+                                   showmedians=True, showextrema=False)
+            for pc in parts['bodies']:
+                pc.set_facecolor('#3498db')
+                pc.set_alpha(0.4)
+            parts['cmeans'].set_color('red')
+            parts['cmedians'].set_color('green')
+            bp = ax3.boxplot(ahorros, positions=[1], widths=0.15, patch_artist=True,
+                             showfliers=False)
             bp['boxes'][0].set_facecolor('#2ecc71')
-            bp['boxes'][0].set_alpha(0.7)
-            ax2.set_ylabel('Ahorro Tributario', fontsize=10)
-            ax2.set_title('Dispersión de Resultados', fontsize=12, fontweight='bold')
-            ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1000:.0f}K'))
-            ax2.grid(axis='y', alpha=0.3)
-            
-            # Estadísticas
-            cv = np.std(ahorros) / np.mean(ahorros) * 100 if np.mean(ahorros) != 0 else 0
-            
-            stats_text = f"""
-    ESTADÍSTICAS SIMULACIÓN
-    {'='*30}
-    Iteraciones:  {n_sim:,}
-    Variabilidad: ±{variabilidad*100:.1f}%
+            bp['boxes'][0].set_alpha(0.6)
+            ax3.set_ylabel('Ahorro Tributario (S/)', fontsize=10)
+            ax3.set_title('Violin + Box Plot', fontsize=11, fontweight='bold')
+            ax3.set_xticks([1])
+            ax3.set_xticklabels(['Ahorro'])
+            ax3.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1000:.0f}K'))
+            ax3.grid(axis='y', alpha=0.3)
 
-    AHORRO TRIBUTARIO:
-      Media:      {np.mean(ahorros):>12,.0f}
-      Mediana:    {np.median(ahorros):>12,.0f}
-      Desv.Est.:  {np.std(ahorros):>12,.0f}
-      Coef.Var.:  {cv:>12,.2f}%
-      
-    PERCENTILES:
-      P5:         {np.percentile(ahorros, 5):>12,.0f}
-      P25:        {np.percentile(ahorros, 25):>12,.0f}
-      P75:        {np.percentile(ahorros, 75):>12,.0f}
-      P95:        {np.percentile(ahorros, 95):>12,.0f}
-      
-    RANGO:
-      Mínimo:     {np.min(ahorros):>12,.0f}
-      Máximo:     {np.max(ahorros):>12,.0f}
+            # [4] Panel de estadisticos
+            stats_text = f"""ESTADISTICAS SIMULACION
+{'='*34}
+Iteraciones:  {n_sim:,}
+Variabilidad: +/-{variabilidad*100:.1f}%
 
-    IC 95%:
-      [{np.percentile(ahorros, 2.5):,.0f}, 
-       {np.percentile(ahorros, 97.5):,.0f}]
-    """
-            
-            ax3.axis('off')
-            ax3.text(0.05, 0.95, stats_text, transform=ax3.transAxes,
-                    fontsize=8, verticalalignment='top', fontfamily='monospace',
-                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-            
-            # CDF
-            sorted_ahorros = np.sort(ahorros)
-            cumulative = np.arange(1, len(sorted_ahorros) + 1) / len(sorted_ahorros)
-            
-            ax4.plot(sorted_ahorros, cumulative * 100, color='#9b59b6', linewidth=2)
-            ax4.axhline(50, color='red', linestyle='--', alpha=0.5, label='Mediana')
-            ax4.axhline(95, color='green', linestyle='--', alpha=0.5, label='P95')
-            ax4.set_xlabel('Ahorro Tributario', fontsize=10)
-            ax4.set_ylabel('Probabilidad Acumulada (%)', fontsize=10)
-            ax4.set_title('Función de Distribución Acumulada', fontsize=12, fontweight='bold')
-            ax4.grid(True, alpha=0.3)
-            ax4.legend()
-            ax4.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1000:.0f}K'))
-            
+AHORRO TRIBUTARIO:
+  Media:      {media:>12,.0f}
+  Mediana:    {mediana:>12,.0f}
+  Desv.Est.:  {std:>12,.0f}
+  Coef.Var.:  {cv:>12,.2f}%
+
+PERCENTILES:
+  P5:         {np.percentile(ahorros, 5):>12,.0f}
+  P25:        {np.percentile(ahorros, 25):>12,.0f}
+  P75:        {np.percentile(ahorros, 75):>12,.0f}
+  P95:        {np.percentile(ahorros, 95):>12,.0f}
+
+BOOTSTRAP IC {conf_val*100:.0f}%:
+  [{ic_boot_lower:>12,.0f},
+   {ic_boot_upper:>12,.0f}]
+
+PRUEBA HIPOTESIS (H0: ahorro=0):
+  P-valor Boot:  {p_valor_boot:.4e}
+  t-stat ref:    {t_stat:.4f}
+  P-valor t:     {p_value_t:.4e}
+  Decision:      {decision}"""
+            if ln_ajustado:
+                stats_text += f"""
+
+LOG-NORMAL FIT:
+  Shape(s):  {ln_shape:.4f}
+  Scale:     {ln_scale:>12,.0f}"""
+
+            ax4.axis('off')
+            ax4.text(0.05, 0.95, stats_text, transform=ax4.transAxes,
+                     fontsize=7.5, verticalalignment='top', fontfamily='monospace',
+                     bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
             plt.tight_layout()
 
-            self.fig_simulacion = fig  # Guardar para Excel
+            self.fig_simulacion = fig
             self.datos_simulacion = {
                 'n_sim': n_sim,
                 'variabilidad': variabilidad * 100,
-                'media': np.mean(ahorros),
-                'mediana': np.median(ahorros),
-                'std': np.std(ahorros),
+                'media': media,
+                'mediana': mediana,
+                'std': std,
                 'cv': cv,
-                'min': np.min(ahorros),
-                'max': np.max(ahorros),
-                'p5': np.percentile(ahorros, 5),
-                'p25': np.percentile(ahorros, 25),
-                'p75': np.percentile(ahorros, 75),
-                'p95': np.percentile(ahorros, 95),
-                'ic_lower': np.percentile(ahorros, 2.5),
-                'ic_upper': np.percentile(ahorros, 97.5),
+                'min': float(np.min(ahorros)),
+                'max': float(np.max(ahorros)),
+                'p5': float(np.percentile(ahorros, 5)),
+                'p25': float(np.percentile(ahorros, 25)),
+                'p75': float(np.percentile(ahorros, 75)),
+                'p95': float(np.percentile(ahorros, 95)),
+                'ic_lower': ic_boot_lower,
+                'ic_upper': ic_boot_upper,
+                'ic_metodo': 'Bootstrap Percentil',
                 't_stat': t_stat,
-                'p_value': p_value,
+                'p_value': p_valor_boot,
+                'p_value_t': p_value_t,
                 'decision': decision,
                 'conf_nivel': conf_val * 100,
-                'alfa': alfa_val
+                'alfa': alfa_val,
+                'n_bootstrap': n_boot,
+                'ln_ajustado': ln_ajustado,
+                'ln_shape': ln_shape if ln_ajustado else None,
+                'ln_loc': ln_loc if ln_ajustado else None,
+                'ln_scale': ln_scale if ln_ajustado else None,
             }
 
             self.canvas_simulacion = FigureCanvasTkAgg(fig, self.frame_sim_container)
             self.canvas_simulacion.draw()
             self.canvas_simulacion.get_tk_widget().pack(fill='both', expand=True)
 
-            messagebox.showinfo("Simulación Completa",
-                              f"Ahorro esperado: {np.mean(ahorros):,.0f}\n"
-                              f"IC 95%: [{np.percentile(ahorros, 2.5):,.0f}, {np.percentile(ahorros, 97.5):,.0f}]")
+            messagebox.showinfo("Simulacion Completa",
+                                f"Ahorro esperado: {media:,.0f}\n"
+                                f"IC {conf_val*100:.0f}% Bootstrap: [{ic_boot_lower:,.0f}, {ic_boot_upper:,.0f}]\n"
+                                f"P-valor (bootstrap): {p_valor_boot:.4e}\n"
+                                f"Decision: {decision}")
 
         except Exception as e:
-            messagebox.showerror("Error", f"Error en simulación: {str(e)}")
+            messagebox.showerror("Error", f"Error en simulacion: {str(e)}")
 
     def _calcular_ahorro_grupo(self, satelites_info, tasa_general, tasa_especial,
                                limite_utilidad, limite_ingresos, utilidad_sin_estructura):
@@ -1545,6 +1620,259 @@ permitido en el régimen especial, maximizando el ahorro tributario.
             return limite_utilidad * tasa_especial + (utilidad_neta - limite_utilidad) * tasa_general
         else:  # General
             return utilidad_neta * tasa_general
+
+    def simular_equilibrio_financiero(self):
+        """Simulacion Monte Carlo estocastica del margen de equilibrio y ahorro asociado.
+
+        Varia costos y gastos con distribucion log-normal, calcula el margen de equilibrio
+        exacto para cada iteracion, aplica bootstrap e ajuste log-normal, y genera graficos.
+        """
+        try:
+            if not hasattr(self, 'resultados'):
+                messagebox.showwarning("Advertencia", "Primero debe calcular los margenes optimos")
+                return
+
+            n_sim = int(self.entry_n_sim_eq.get())
+            variabilidad = float(self.entry_variabilidad.get()) / 100 if hasattr(self, 'entry_variabilidad') else 0.10
+
+            tasa_gral = self.resultados['parametros']['tasa_general'] / 100
+            tasa_esp = self.resultados['parametros']['tasa_especial'] / 100
+            tasa_pc = self.TASA_PAGO_CUENTA.get() / 100
+            limite_util = self.resultados['parametros']['limite_utilidad']
+            limite_ing = self.resultados['parametros']['limite_ingresos']
+
+            sigma_ln = np.sqrt(np.log(1 + (variabilidad / 3) ** 2))
+            mu_ln = -0.5 * sigma_ln ** 2
+
+            margenes_eq = []
+            ahorros_eq = []
+            regimenes_count = {"Especial": 0, "Mixto": 0, "General": 0, "Sin_solucion": 0}
+
+            for _ in range(n_sim):
+                ahorro_total_iter = 0
+                margenes_iter = []
+                total_compras_eq_iter = 0
+                total_costos_iter = 0
+                total_ir_sats_iter = 0
+
+                for sat in self.resultados['satelites']:
+                    factor = np.random.lognormal(mu_ln, sigma_ln)
+                    costo_sim = sat['costo'] * factor
+                    gastos_sim = sat['gastos_operativos'] * factor
+                    es_general = sat['regimen'].startswith('GENERAL')
+
+                    margen, regimen = self._calcular_margen_equilibrio_exacto(
+                        costo_sim, gastos_sim, tasa_pc, tasa_esp,
+                        tasa_gral, limite_util, limite_ing, es_general
+                    )
+
+                    if margen is not None:
+                        margenes_iter.append(margen)
+                        precio_eq = costo_sim * (1 + margen)
+                        util_eq = costo_sim * margen - gastos_sim
+                        ir_eq = self._calcular_ir_equilibrio(util_eq, tasa_esp, tasa_gral,
+                                                              limite_util, regimen)
+                        regimenes_count[regimen] += 1
+                        total_compras_eq_iter += precio_eq
+                        total_costos_iter += costo_sim
+                        total_ir_sats_iter += ir_eq
+                    else:
+                        regimenes_count["Sin_solucion"] += 1
+                        precio_eq = costo_sim * 1.05
+                        total_compras_eq_iter += precio_eq
+                        total_costos_iter += costo_sim
+                        util_fb = costo_sim * 0.05 - gastos_sim
+                        total_ir_sats_iter += max(0, util_fb) * tasa_gral
+
+                # Recalcular impuesto matriz
+                util_sin = self.resultados['matriz']['utilidad_sin_estructura']
+                util_matriz_eq = max(0, util_sin - total_compras_eq_iter + total_costos_iter)
+                imp_matriz_eq = util_matriz_eq * tasa_gral
+                ir_grupo_eq = imp_matriz_eq + total_ir_sats_iter
+                ahorro_iter = self.resultados['matriz']['impuesto_sin_estructura'] - ir_grupo_eq
+
+                if margenes_iter:
+                    margenes_eq.append(np.mean(margenes_iter) * 100)
+                ahorros_eq.append(ahorro_iter)
+
+            margenes_eq = np.array(margenes_eq)
+            ahorros_eq = np.array(ahorros_eq)
+
+            # Bootstrap percentil IC
+            conf_val = self.CONF_NIVEL.get() / 100
+            alfa_val = self.ALFA_SIG.get()
+            n_boot = 3000
+
+            if len(margenes_eq) > 10:
+                boot_margenes = np.array([
+                    np.mean(np.random.choice(margenes_eq, size=len(margenes_eq), replace=True))
+                    for _ in range(n_boot)
+                ])
+                alpha_boot = 1 - conf_val
+                ic_margen_lo = np.percentile(boot_margenes, 100 * alpha_boot / 2)
+                ic_margen_hi = np.percentile(boot_margenes, 100 * (1 - alpha_boot / 2))
+            else:
+                ic_margen_lo = ic_margen_hi = np.mean(margenes_eq) if len(margenes_eq) > 0 else 0
+
+            boot_ahorros = np.array([
+                np.mean(np.random.choice(ahorros_eq, size=len(ahorros_eq), replace=True))
+                for _ in range(n_boot)
+            ])
+            ic_ahorro_lo = np.percentile(boot_ahorros, 100 * (1 - conf_val) / 2)
+            ic_ahorro_hi = np.percentile(boot_ahorros, 100 * (1 + conf_val) / 2)
+            p_valor_boot = max(np.mean(boot_ahorros <= 0), 1 / n_boot)
+
+            # Ajuste Log-Normal al margen
+            ln_ajustado = False
+            ln_shape = ln_loc = ln_scale = 0
+            margenes_pos = margenes_eq[margenes_eq > 0]
+            if len(margenes_pos) > 50:
+                try:
+                    ln_shape, ln_loc, ln_scale = stats.lognorm.fit(margenes_pos, floc=0)
+                    ln_ajustado = True
+                except Exception:
+                    pass
+
+            # --- GRAFICOS ---
+            if self.canvas_equilibrio_sim:
+                self.canvas_equilibrio_sim.get_tk_widget().destroy()
+
+            fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(14, 10))
+            fig.suptitle(f'Simulacion Equilibrio Financiero ({n_sim:,} iter.)',
+                         fontsize=14, fontweight='bold')
+
+            # [1] Histograma margenes + Log-Normal
+            if len(margenes_eq) > 0:
+                ax1.hist(margenes_eq, bins=50, color='#2E75B6', alpha=0.6, edgecolor='black',
+                         density=True, label='Margenes simulados')
+                if ln_ajustado:
+                    x_ln = np.linspace(max(0.01, margenes_eq.min()), margenes_eq.max(), 300)
+                    pdf_ln = stats.lognorm.pdf(x_ln, ln_shape, ln_loc, ln_scale)
+                    ax1.plot(x_ln, pdf_ln, 'r-', linewidth=2,
+                             label=f'Log-Normal (s={ln_shape:.3f})')
+                ax1.axvline(np.mean(margenes_eq), color='orange', linestyle='--', linewidth=2,
+                            label=f'Media: {np.mean(margenes_eq):.4f}%')
+                ax1.axvline(np.median(margenes_eq), color='green', linestyle=':', linewidth=2,
+                            label=f'Mediana: {np.median(margenes_eq):.4f}%')
+            ax1.set_xlabel('Margen Equilibrio (%)', fontsize=10)
+            ax1.set_ylabel('Densidad', fontsize=10)
+            ax1.set_title('Distribucion Margen de Equilibrio', fontsize=11, fontweight='bold')
+            ax1.legend(fontsize=7)
+            ax1.grid(alpha=0.3)
+
+            # [2] Histograma ahorros en equilibrio
+            ax2.hist(ahorros_eq, bins=50, color='#2ecc71', alpha=0.6, edgecolor='black',
+                     density=True, label='Ahorros simulados')
+            ax2.axvline(np.mean(ahorros_eq), color='orange', linestyle='--', linewidth=2,
+                        label=f'Media: {np.mean(ahorros_eq):,.0f}')
+            ax2.fill_betweenx([0, ax2.get_ylim()[1] if ax2.get_ylim()[1] > 0 else 0.001],
+                              ic_ahorro_lo, ic_ahorro_hi, alpha=0.15, color='red',
+                              label=f'IC {conf_val*100:.0f}%')
+            ax2.set_xlabel('Ahorro Tributario en Equilibrio (S/)', fontsize=10)
+            ax2.set_ylabel('Densidad', fontsize=10)
+            ax2.set_title('Distribucion Ahorro en Equilibrio', fontsize=11, fontweight='bold')
+            ax2.legend(fontsize=7)
+            ax2.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1000:.0f}K'))
+            ax2.grid(alpha=0.3)
+
+            # [3] Violin margen + ahorro
+            if len(margenes_eq) > 0:
+                parts_m = ax3.violinplot(margenes_eq, positions=[1], showmeans=True,
+                                         showmedians=True, showextrema=False)
+                for pc in parts_m['bodies']:
+                    pc.set_facecolor('#2E75B6')
+                    pc.set_alpha(0.5)
+                ax3_twin = ax3.twinx()
+                parts_a = ax3_twin.violinplot(ahorros_eq, positions=[2], showmeans=True,
+                                               showmedians=True, showextrema=False)
+                for pc in parts_a['bodies']:
+                    pc.set_facecolor('#2ecc71')
+                    pc.set_alpha(0.5)
+                ax3.set_xticks([1, 2])
+                ax3.set_xticklabels(['Margen Eq.(%)', 'Ahorro Eq.(S/)'])
+                ax3.set_ylabel('Margen (%)', color='#2E75B6', fontsize=10)
+                ax3_twin.set_ylabel('Ahorro (S/)', color='#2ecc71', fontsize=10)
+                ax3_twin.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1000:.0f}K'))
+            ax3.set_title('Violin: Margen y Ahorro', fontsize=11, fontweight='bold')
+            ax3.grid(axis='y', alpha=0.3)
+
+            # [4] Panel estadisticos
+            total_reg = sum(regimenes_count.values())
+            stats_eq_text = f"""SIMULACION EQUILIBRIO FINANCIERO
+{'='*38}
+Iteraciones:        {n_sim:,}
+Variabilidad:       +/-{variabilidad*100:.1f}%
+
+MARGEN EQUILIBRIO:
+  Media:            {np.mean(margenes_eq):>10.4f}%
+  Mediana:          {np.median(margenes_eq):>10.4f}%
+  Desv.Est:         {np.std(margenes_eq):>10.4f}%
+  IC {conf_val*100:.0f}% Boot:     [{ic_margen_lo:.4f}%, {ic_margen_hi:.4f}%]
+
+AHORRO EN EQUILIBRIO:
+  Media:            {np.mean(ahorros_eq):>12,.0f}
+  IC {conf_val*100:.0f}% Boot:     [{ic_ahorro_lo:>12,.0f},
+                     {ic_ahorro_hi:>12,.0f}]
+  P-valor (boot):   {p_valor_boot:.4e}
+
+REGIMENES ({total_reg} eval.):
+  Especial: {regimenes_count['Especial']:>6} ({regimenes_count['Especial']/max(1,total_reg)*100:.1f}%)
+  Mixto:    {regimenes_count['Mixto']:>6} ({regimenes_count['Mixto']/max(1,total_reg)*100:.1f}%)
+  General:  {regimenes_count['General']:>6} ({regimenes_count['General']/max(1,total_reg)*100:.1f}%)
+  Sin sol.: {regimenes_count['Sin_solucion']:>6}"""
+            if ln_ajustado:
+                stats_eq_text += f"""
+
+LOG-NORMAL FIT (margen):
+  Shape(s):  {ln_shape:.4f}
+  Scale:     {ln_scale:.4f}"""
+
+            ax4.axis('off')
+            ax4.text(0.05, 0.95, stats_eq_text, transform=ax4.transAxes,
+                     fontsize=7.5, verticalalignment='top', fontfamily='monospace',
+                     bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.5))
+
+            plt.tight_layout()
+
+            self.fig_equilibrio_sim = fig
+            self.datos_equilibrio_sim = {
+                'n_sim': n_sim,
+                'variabilidad': variabilidad * 100,
+                'margen_media': float(np.mean(margenes_eq)) if len(margenes_eq) > 0 else 0,
+                'margen_mediana': float(np.median(margenes_eq)) if len(margenes_eq) > 0 else 0,
+                'margen_std': float(np.std(margenes_eq)) if len(margenes_eq) > 0 else 0,
+                'margen_p5': float(np.percentile(margenes_eq, 5)) if len(margenes_eq) > 0 else 0,
+                'margen_p95': float(np.percentile(margenes_eq, 95)) if len(margenes_eq) > 0 else 0,
+                'ic_margen_lower': ic_margen_lo,
+                'ic_margen_upper': ic_margen_hi,
+                'ahorro_media': float(np.mean(ahorros_eq)),
+                'ahorro_mediana': float(np.median(ahorros_eq)),
+                'ahorro_std': float(np.std(ahorros_eq)),
+                'ahorro_p5': float(np.percentile(ahorros_eq, 5)),
+                'ahorro_p95': float(np.percentile(ahorros_eq, 95)),
+                'ic_ahorro_lower': ic_ahorro_lo,
+                'ic_ahorro_upper': ic_ahorro_hi,
+                'p_valor_boot': p_valor_boot,
+                'conf_nivel': conf_val * 100,
+                'alfa': alfa_val,
+                'regimenes': regimenes_count,
+                'ln_ajustado': ln_ajustado,
+                'ln_shape': ln_shape if ln_ajustado else None,
+                'ln_scale': ln_scale if ln_ajustado else None,
+            }
+
+            self.canvas_equilibrio_sim = FigureCanvasTkAgg(fig, self.frame_eq_sim_graficos)
+            self.canvas_equilibrio_sim.draw()
+            self.canvas_equilibrio_sim.get_tk_widget().pack(fill='both', expand=True)
+
+            messagebox.showinfo("Simulacion Equilibrio Completa",
+                                f"Margen equilibrio medio: {np.mean(margenes_eq):.4f}%\n"
+                                f"Ahorro medio equilibrio: {np.mean(ahorros_eq):,.0f}\n"
+                                f"IC {conf_val*100:.0f}%: [{ic_ahorro_lo:,.0f}, {ic_ahorro_hi:,.0f}]\n"
+                                f"P-valor (bootstrap): {p_valor_boot:.4e}")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Error en simulacion equilibrio: {str(e)}")
 
     def analizar_pagos_cuenta(self):
         """Analisis de punto de equilibrio financiero: donde IR = Pagos a Cuenta (saldo = 0, eficiencia = 100%).
@@ -2247,6 +2575,7 @@ permitido en el régimen especial, maximizando el ahorro tributario.
                 img_sensibilidad = self._guardar_figura_temp(self.fig_sensibilidad, 'sensibilidad', tmpdir)
                 img_comparativo = self._guardar_figura_temp(self.fig_comparativo, 'comparativo', tmpdir)
                 img_pagos_cuenta = self._guardar_figura_temp(self.fig_pagos_cuenta, 'pagos_cuenta', tmpdir)
+                img_equilibrio_sim = self._guardar_figura_temp(self.fig_equilibrio_sim, 'equilibrio_sim', tmpdir)
 
                 # ========================================================
                 # HOJA 1: RESUMEN EJECUTIVO
@@ -2337,7 +2666,7 @@ permitido en el régimen especial, maximizando el ahorro tributario.
 
                 datos_con = [
                     ("Impuesto Matriz (con estructura)", f"S/ {r['matriz']['impuesto_con_estructura']:,.2f}"),
-                    ("Impuesto Total Satélites", f"S/ {r['grupo']['total_impuesto_satelites']:,.2f}"),
+                    ("Impuesto Total Satelites", f"S/ {r['grupo']['total_impuesto_satelites']:,.2f}"),
                     ("Impuesto Total Grupo", f"S/ {r['grupo']['impuesto_total']:,.2f}"),
                     ("AHORRO NETO", f"S/ {r['grupo']['ahorro_tributario']:,.2f}"),
                 ]
@@ -2350,9 +2679,40 @@ permitido en el régimen especial, maximizando el ahorro tributario.
                     c.value = val
                     self._aplicar_estilo(c, self._estilo_celda(j % 2 == 0))
                     if j == len(datos_con) - 1:
-                        # Resaltar ahorro neto
                         ws1.cell(row=fila + j, column=2).font = Font(name='Calibri', bold=True, color='006600', size=11)
                         ws1.cell(row=fila + j, column=4).font = Font(name='Calibri', bold=True, color='006600', size=11)
+
+                # Seccion: Equilibrio Financiero (si se calculo)
+                if self.datos_pagos_cuenta:
+                    gpc = self.datos_pagos_cuenta['global']
+                    fila += len(datos_con) + 1
+                    ws1.merge_cells(f'B{fila}:E{fila}')
+                    c = ws1[f'B{fila}']
+                    c.value = "EQUILIBRIO FINANCIERO (IR = Pagos a Cuenta, Saldo = 0)"
+                    self._aplicar_estilo(c, self._estilo_subtitulo())
+                    c.fill = PatternFill(start_color='2E75B6', end_color='2E75B6', fill_type='solid')
+                    c.font = Font(name='Calibri', bold=True, color='FFFFFF', size=11)
+                    fila += 1
+
+                    datos_eq_res = [
+                        ("IR Grupo (Equilibrio)", f"S/ {gpc['ir_grupo_eq']:,.2f}"),
+                        ("PaC Grupo (Equilibrio)", f"S/ {gpc['pc_grupo_eq']:,.2f}"),
+                        ("Saldo Regularizacion", f"S/ {gpc['saldo_grupo_eq']:,.2f}"),
+                        ("Eficiencia PaC", f"{gpc['eficiencia_eq']:.1f}% (ideal=100%)"),
+                        ("Tasa Efectiva Grupo", f"{gpc['tasa_efectiva_eq']:.1f}%"),
+                        ("AHORRO vs Sin Estructura", f"S/ {gpc['ahorro_eq_total']:,.2f} ({gpc['ahorro_eq_pct']:.1f}%)"),
+                    ]
+                    for j, (lab, val) in enumerate(datos_eq_res):
+                        c = ws1.cell(row=fila + j, column=2)
+                        c.value = lab
+                        self._aplicar_estilo(c, self._estilo_celda(j % 2 == 0))
+                        c.alignment = Alignment(horizontal='left')
+                        c = ws1.cell(row=fila + j, column=4)
+                        c.value = val
+                        self._aplicar_estilo(c, self._estilo_celda(j % 2 == 0))
+                        if j == len(datos_eq_res) - 1:
+                            ws1.cell(row=fila + j, column=2).font = Font(name='Calibri', bold=True, color='2E75B6', size=11)
+                            ws1.cell(row=fila + j, column=4).font = Font(name='Calibri', bold=True, color='2E75B6', size=11)
 
                 # ========================================================
                 # HOJA 2: DETALLE SATELITES
@@ -2427,10 +2787,71 @@ permitido en el régimen especial, maximizando el ahorro tributario.
                     c.font = Font(bold=True, size=10, color='1F4E79')
                     c.fill = PatternFill(start_color='E8F0FE', end_color='E8F0FE', fill_type='solid')
 
+                # --- METRICAS DE EQUILIBRIO FINANCIERO POR SATELITE ---
+                if self.datos_pagos_cuenta and self.datos_pagos_cuenta.get('satelites'):
+                    fila_eq = fila_total + 2
+                    ws2.merge_cells(f'B{fila_eq}:Q{fila_eq}')
+                    c = ws2[f'B{fila_eq}']
+                    c.value = "METRICAS DE EQUILIBRIO FINANCIERO POR SATELITE (IR = PaC, Saldo = 0)"
+                    self._aplicar_estilo(c, self._estilo_subtitulo())
+                    c.fill = PatternFill(start_color='2E75B6', end_color='2E75B6', fill_type='solid')
+                    c.font = Font(name='Calibri', bold=True, color='FFFFFF', size=11)
+                    fila_eq += 1
+
+                    headers_eq = ["N", "Empresa", "Regimen Eq.", "Margen Eq.%",
+                                  "Precio Eq.", "Utilidad Eq.", "IR Eq.", "PaC Eq.",
+                                  "Saldo Eq.", "Ahorro Eq.", "Margen Opt.%", "IR Opt.",
+                                  "Saldo Opt.", "Efic.Opt.%"]
+                    for j, h in enumerate(headers_eq, 2):
+                        c = ws2.cell(row=fila_eq, column=j)
+                        c.value = h
+                        self._aplicar_estilo(c, self._estilo_header())
+                        if "Eq." in h:
+                            c.fill = PatternFill(start_color='2E75B6', end_color='2E75B6', fill_type='solid')
+                            c.font = Font(name='Calibri', bold=True, color='FFFFFF', size=9)
+                    ws2.row_dimensions[fila_eq].height = 28
+                    fila_eq += 1
+
+                    for i, sat_pc in enumerate(self.datos_pagos_cuenta['satelites']):
+                        alt = i % 2 == 0
+                        tiene_eq = sat_pc['margen_equilibrio'] is not None
+                        datos_eq_fila = [
+                            i + 1,
+                            sat_pc['nombre'],
+                            sat_pc.get('regimen_equilibrio', 'N/A') if tiene_eq else 'N/A',
+                            sat_pc['margen_equilibrio'] if tiene_eq else 'N/A',
+                            sat_pc['precio_equilibrio'],
+                            sat_pc['utilidad_neta_eq'],
+                            sat_pc['ir_equilibrio'],
+                            sat_pc['pago_cuenta_eq'],
+                            sat_pc['saldo_equilibrio'],
+                            sat_pc['ahorro_equilibrio'],
+                            sat_pc['margen_optimo_regimen'],
+                            sat_pc['ir_optimo'],
+                            sat_pc['saldo_optimo'],
+                            sat_pc['eficiencia_optimo'],
+                        ]
+                        for j, val in enumerate(datos_eq_fila, 2):
+                            c = ws2.cell(row=fila_eq, column=j)
+                            if isinstance(val, (int, float)):
+                                c.value = val
+                                if j in (5, 15):  # Margen %
+                                    c.number_format = '0.0000"%"'
+                                elif j == 15:  # Eficiencia %
+                                    c.number_format = '0.00"%"'
+                                else:
+                                    c.number_format = '#,##0.00'
+                            else:
+                                c.value = val
+                            self._aplicar_estilo(c, self._estilo_celda(alt))
+                        fila_eq += 1
+
                 # Ajustar anchos
                 anchos = [4, 16, 12, 26, 14, 14, 10, 16, 14, 14, 14, 12]
                 for j, w in enumerate(anchos, 2):
                     ws2.column_dimensions[get_column_letter(j)].width = w
+                for j in range(14, 17):
+                    ws2.column_dimensions[get_column_letter(j)].width = 14
 
                 # ========================================================
                 # HOJA 3: GRAFICOS RESULTADOS
@@ -2463,7 +2884,7 @@ permitido en el régimen especial, maximizando el ahorro tributario.
                 if self.datos_simulacion:
                     ds = self.datos_simulacion
 
-                    # Tabla de estadísticas
+                    # Tabla de estadisticas
                     ws4.merge_cells('B4:C4')
                     c = ws4['B4']
                     c.value = "ESTADISTICAS DE SIMULACION"
@@ -2482,8 +2903,6 @@ permitido en el régimen especial, maximizando el ahorro tributario.
                         ("Percentil 25", f"S/ {ds['p25']:,.0f}"),
                         ("Percentil 75", f"S/ {ds['p75']:,.0f}"),
                         ("Percentil 95", f"S/ {ds['p95']:,.0f}"),
-                        ("IC 95% Inferior", f"S/ {ds['ic_lower']:,.0f}"),
-                        ("IC 95% Superior", f"S/ {ds['ic_upper']:,.0f}"),
                     ]
                     for i, (lab, val) in enumerate(stats_data):
                         fila = 5 + i
@@ -2494,21 +2913,45 @@ permitido en el régimen especial, maximizando el ahorro tributario.
                         c = ws4.cell(row=fila, column=3)
                         c.value = val
                         self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
-                    ws4.column_dimensions['B'].width = 20
-                    ws4.column_dimensions['C'].width = 22
+                    ws4.column_dimensions['B'].width = 24
+                    ws4.column_dimensions['C'].width = 28
 
-                    # Prueba de hipótesis
-                    fila_h = 5 + len(stats_data) + 1
+                    # Bootstrap IC
+                    fila_b = 5 + len(stats_data) + 1
+                    ws4.merge_cells(f'B{fila_b}:C{fila_b}')
+                    c = ws4[f'B{fila_b}']
+                    c.value = f"INTERVALO DE CONFIANZA - {ds.get('ic_metodo', 'Bootstrap Percentil')}"
+                    self._aplicar_estilo(c, self._estilo_subtitulo())
+
+                    ic_data = [
+                        ("Metodo", ds.get('ic_metodo', 'Bootstrap Percentil')),
+                        ("N Bootstrap", f"{ds.get('n_bootstrap', 5000):,}"),
+                        (f"IC {ds['conf_nivel']:.0f}% Inferior", f"S/ {ds['ic_lower']:,.0f}"),
+                        (f"IC {ds['conf_nivel']:.0f}% Superior", f"S/ {ds['ic_upper']:,.0f}"),
+                    ]
+                    for i, (lab, val) in enumerate(ic_data):
+                        f = fila_b + 1 + i
+                        c = ws4.cell(row=f, column=2)
+                        c.value = lab
+                        self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+                        c.alignment = Alignment(horizontal='left')
+                        c = ws4.cell(row=f, column=3)
+                        c.value = val
+                        self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+
+                    # Prueba de hipotesis
+                    fila_h = fila_b + 1 + len(ic_data) + 1
                     ws4.merge_cells(f'B{fila_h}:C{fila_h}')
                     c = ws4[f'B{fila_h}']
-                    c.value = "PRUEBA DE HIPOTESIS"
+                    c.value = "PRUEBA DE HIPOTESIS (No Parametrica Bootstrap)"
                     self._aplicar_estilo(c, self._estilo_subtitulo())
 
                     hipotesis_data = [
                         ("H0", "Ahorro medio = 0"),
                         ("H1", "Ahorro medio > 0"),
-                        ("Estadistico t", f"{ds['t_stat']:.4f}"),
-                        ("P-Valor", f"{ds['p_value']:.2e}"),
+                        ("P-Valor (Bootstrap)", f"{ds['p_value']:.2e}"),
+                        ("t-stat (referencia)", f"{ds['t_stat']:.4f}"),
+                        ("P-Valor t (referencia)", f"{ds.get('p_value_t', ds['p_value']):.2e}"),
                         ("Alfa", f"{ds['alfa']}"),
                         ("Nivel Confianza", f"{ds['conf_nivel']:.1f}%"),
                         ("DECISION", ds['decision']),
@@ -2525,7 +2968,30 @@ permitido en el régimen especial, maximizando el ahorro tributario.
                         if lab == "DECISION":
                             c.font = Font(name='Calibri', bold=True, color='006600', size=11)
 
-                    # Gráfico
+                    # Ajuste Log-Normal
+                    if ds.get('ln_ajustado'):
+                        fila_ln = fila_h + 1 + len(hipotesis_data) + 1
+                        ws4.merge_cells(f'B{fila_ln}:C{fila_ln}')
+                        c = ws4[f'B{fila_ln}']
+                        c.value = "AJUSTE DISTRIBUCION LOG-NORMAL"
+                        self._aplicar_estilo(c, self._estilo_subtitulo())
+                        ln_data = [
+                            ("Distribucion", "Log-Normal"),
+                            ("Shape (s)", f"{ds['ln_shape']:.4f}"),
+                            ("Location", f"{ds['ln_loc']:.4f}"),
+                            ("Scale", f"S/ {ds['ln_scale']:,.0f}"),
+                        ]
+                        for i, (lab, val) in enumerate(ln_data):
+                            f = fila_ln + 1 + i
+                            c = ws4.cell(row=f, column=2)
+                            c.value = lab
+                            self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+                            c.alignment = Alignment(horizontal='left')
+                            c = ws4.cell(row=f, column=3)
+                            c.value = val
+                            self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+
+                    # Grafico
                     if img_simulacion:
                         self._insertar_imagen(ws4, img_simulacion, 'E4', ancho_cm=36, alto_cm=22)
                 else:
@@ -3196,16 +3662,135 @@ permitido en el régimen especial, maximizando el ahorro tributario.
 
                 ws9.merge_cells(f'B{fila_f+2}:D{fila_f+2}')
                 c = ws9[f'B{fila_f+2}']
-                c.value = "Margen Equilibrio: m_eq = (t_pc * C + t_esp * G) / (C * (t_esp - t_pc))"
-                c.font = Font(name='Consolas', size=11, bold=True, color='E67E22')
+                c.value = "Equilibrio A (Especial): m = (C*t_pc + G*t_esp) / (C*(t_esp - t_pc))"
+                c.font = Font(name='Consolas', size=10, bold=True, color='E67E22')
+
+                ws9.merge_cells(f'B{fila_f+3}:D{fila_f+3}')
+                c = ws9[f'B{fila_f+3}']
+                c.value = "Equilibrio B (Mixto MYPE): m = (C*t_pc + G*t_gral + L*(t_gral-t_esp)) / (C*(t_gral-t_pc))"
+                c.font = Font(name='Consolas', size=10, bold=True, color='E67E22')
 
                 ws9.merge_cells(f'B{fila_f+4}:D{fila_f+4}')
                 c = ws9[f'B{fila_f+4}']
+                c.value = "Equilibrio C (General): m = (C*t_pc + G*t_gral) / (C*(t_gral - t_pc))"
+                c.font = Font(name='Consolas', size=10, bold=True, color='E67E22')
+
+                ws9.merge_cells(f'B{fila_f+6}:D{fila_f+6}')
+                c = ws9[f'B{fila_f+6}']
                 c.value = ("La formula de margen optimo garantiza que la utilidad neta alcance exactamente "
-                          "el limite del regimen especial. La formula de equilibrio determina el punto "
-                          "donde el IR iguala a los pagos a cuenta, eliminando el saldo a favor.")
+                          "el limite del regimen especial. Las 3 formulas de equilibrio determinan el punto "
+                          "donde IR = PaC segun el regimen resultante: Especial (util<=15UIT), "
+                          "Mixto MYPE (util>15UIT, ing<=1700UIT), o General (ing>1700UIT).")
                 c.font = Font(name='Calibri', italic=True, color='666666', size=9)
                 c.alignment = Alignment(wrap_text=True)
+
+                # ========================================================
+                # HOJA 10: SIMULACION EQUILIBRIO FINANCIERO
+                # ========================================================
+                ws10 = wb.create_sheet("SIM. EQUILIBRIO")
+                ws10.sheet_properties.tabColor = "8E44AD"
+
+                ws10.merge_cells('B2:H2')
+                c = ws10['B2']
+                c.value = "SIMULACION MONTE CARLO - EQUILIBRIO FINANCIERO"
+                self._aplicar_estilo(c, self._estilo_titulo())
+
+                if self.datos_equilibrio_sim:
+                    deq = self.datos_equilibrio_sim
+
+                    ws10.merge_cells('B4:C4')
+                    c = ws10['B4']
+                    c.value = "ESTADISTICAS MARGEN DE EQUILIBRIO"
+                    self._aplicar_estilo(c, self._estilo_subtitulo())
+
+                    stats_eq_data = [
+                        ("Iteraciones", f"{deq['n_sim']:,}"),
+                        ("Variabilidad", f"+/-{deq['variabilidad']:.1f}%"),
+                        ("", ""),
+                        ("--- MARGEN EQUILIBRIO ---", ""),
+                        ("Media", f"{deq['margen_media']:.4f}%"),
+                        ("Mediana", f"{deq['margen_mediana']:.4f}%"),
+                        ("Desv. Estandar", f"{deq['margen_std']:.4f}%"),
+                        ("Percentil 5", f"{deq['margen_p5']:.4f}%"),
+                        ("Percentil 95", f"{deq['margen_p95']:.4f}%"),
+                        (f"IC {deq['conf_nivel']:.0f}% Inferior", f"{deq['ic_margen_lower']:.4f}%"),
+                        (f"IC {deq['conf_nivel']:.0f}% Superior", f"{deq['ic_margen_upper']:.4f}%"),
+                        ("", ""),
+                        ("--- AHORRO EN EQUILIBRIO ---", ""),
+                        ("Media", f"S/ {deq['ahorro_media']:,.0f}"),
+                        ("Mediana", f"S/ {deq['ahorro_mediana']:,.0f}"),
+                        ("Desv. Estandar", f"S/ {deq['ahorro_std']:,.0f}"),
+                        ("Percentil 5", f"S/ {deq['ahorro_p5']:,.0f}"),
+                        ("Percentil 95", f"S/ {deq['ahorro_p95']:,.0f}"),
+                        (f"IC {deq['conf_nivel']:.0f}% Inferior", f"S/ {deq['ic_ahorro_lower']:,.0f}"),
+                        (f"IC {deq['conf_nivel']:.0f}% Superior", f"S/ {deq['ic_ahorro_upper']:,.0f}"),
+                        ("P-Valor (Bootstrap)", f"{deq['p_valor_boot']:.4e}"),
+                    ]
+                    for i, (lab, val) in enumerate(stats_eq_data):
+                        fila = 5 + i
+                        c = ws10.cell(row=fila, column=2)
+                        c.value = lab
+                        self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+                        c.alignment = Alignment(horizontal='left')
+                        if lab.startswith("---"):
+                            c.font = Font(name='Calibri', bold=True, color='1F4E79', size=10)
+                        c = ws10.cell(row=fila, column=3)
+                        c.value = val
+                        self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+
+                    # Distribucion de regimenes
+                    fila_r = 5 + len(stats_eq_data) + 1
+                    ws10.merge_cells(f'B{fila_r}:C{fila_r}')
+                    c = ws10[f'B{fila_r}']
+                    c.value = "DISTRIBUCION DE REGIMENES EN SIMULACION"
+                    self._aplicar_estilo(c, self._estilo_subtitulo())
+
+                    reg = deq['regimenes']
+                    total_reg = sum(reg.values())
+                    reg_data = [
+                        ("Especial Puro", f"{reg['Especial']:,} ({reg['Especial']/max(1,total_reg)*100:.1f}%)"),
+                        ("Mixto MYPE", f"{reg['Mixto']:,} ({reg['Mixto']/max(1,total_reg)*100:.1f}%)"),
+                        ("General Puro", f"{reg['General']:,} ({reg['General']/max(1,total_reg)*100:.1f}%)"),
+                        ("Sin solucion", f"{reg['Sin_solucion']:,} ({reg['Sin_solucion']/max(1,total_reg)*100:.1f}%)"),
+                    ]
+                    for i, (lab, val) in enumerate(reg_data):
+                        f = fila_r + 1 + i
+                        c = ws10.cell(row=f, column=2)
+                        c.value = lab
+                        self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+                        c.alignment = Alignment(horizontal='left')
+                        c = ws10.cell(row=f, column=3)
+                        c.value = val
+                        self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+
+                    # Log-Normal fit
+                    if deq.get('ln_ajustado'):
+                        fila_ln = fila_r + 1 + len(reg_data) + 1
+                        ws10.merge_cells(f'B{fila_ln}:C{fila_ln}')
+                        c = ws10[f'B{fila_ln}']
+                        c.value = "AJUSTE LOG-NORMAL (Margen Equilibrio)"
+                        self._aplicar_estilo(c, self._estilo_subtitulo())
+                        ln_data = [
+                            ("Shape (s)", f"{deq['ln_shape']:.4f}"),
+                            ("Scale", f"{deq['ln_scale']:.4f}"),
+                        ]
+                        for i, (lab, val) in enumerate(ln_data):
+                            f = fila_ln + 1 + i
+                            c = ws10.cell(row=f, column=2)
+                            c.value = lab
+                            self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+                            c = ws10.cell(row=f, column=3)
+                            c.value = val
+                            self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+
+                    ws10.column_dimensions['B'].width = 26
+                    ws10.column_dimensions['C'].width = 28
+
+                    if img_equilibrio_sim:
+                        self._insertar_imagen(ws10, img_equilibrio_sim, 'E4', ancho_cm=36, alto_cm=22)
+                else:
+                    ws10['B4'] = "Ejecute 'Simular Equilibrio (Monte Carlo)' en la pestana Pagos a Cuenta."
+                    ws10['B4'].font = Font(italic=True, color='999999', size=11)
 
                 # Guardar
                 wb.save(path)
@@ -3214,15 +3799,16 @@ permitido en el régimen especial, maximizando el ahorro tributario.
                 "Exportacion Completa",
                 f"Reporte Gerencial exportado exitosamente.\n\n"
                 f"Hojas generadas:\n"
-                f"  1. Resumen Ejecutivo\n"
-                f"  2. Detalle Satelites\n"
+                f"  1. Resumen Ejecutivo (+ Equilibrio Financiero)\n"
+                f"  2. Detalle Satelites (+ Metricas Equilibrio)\n"
                 f"  3. Graficos Resultados{'  [OK]' if img_resultados else '  [Pendiente]'}\n"
-                f"  4. Simulacion Monte Carlo{'  [OK]' if img_simulacion else '  [Pendiente]'}\n"
+                f"  4. Simulacion Monte Carlo (Bootstrap+LogNormal){'  [OK]' if self.datos_simulacion else '  [Pendiente]'}\n"
                 f"  5. Sensibilidad{'  [OK]' if img_sensibilidad else '  [Pendiente]'}\n"
                 f"  6. Comparativo{'  [OK]' if img_comparativo else '  [Pendiente]'}\n"
-                f"  7. Pagos a Cuenta y Equilibrio Financiero{'  [OK]' if self.datos_pagos_cuenta else '  [Pendiente]'}\n"
+                f"  7. Pagos a Cuenta y Equilibrio{'  [OK]' if self.datos_pagos_cuenta else '  [Pendiente]'}\n"
                 f"  8. Sensibilidad Margenes\n"
-                f"  9. Parametros\n\n"
+                f"  9. Parametros\n"
+                f" 10. Sim. Equilibrio (Monte Carlo){'  [OK]' if self.datos_equilibrio_sim else '  [Pendiente]'}\n\n"
                 f"Archivo: {path}"
             )
         except Exception as e:
