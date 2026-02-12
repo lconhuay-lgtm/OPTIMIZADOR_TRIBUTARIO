@@ -1472,11 +1472,85 @@ permitido en el régimen especial, maximizando el ahorro tributario.
             messagebox.showerror("Error", f"Error en comparativo: {str(e)}")
 
         
+    def _calcular_margen_equilibrio_exacto(self, costo, gastos, tasa_pc, tasa_especial,
+                                             tasa_general, limite_utilidad, limite_ingresos, es_general):
+        """Calcula el margen de equilibrio exacto donde IR = PaC (saldo = 0).
+
+        Prueba 3 escenarios en orden:
+        A) Regimen Especial Puro: Util * t_esp = Ingreso * t_pc
+        B) Regimen MYPE Mixto: L*t_esp + (Util-L)*t_gral = Ingreso * t_pc
+        C) Regimen General Puro: Util * t_gral = Ingreso * t_pc
+
+        Returns: (margen, regimen_str) o (None, None) si no hay solucion factible.
+        """
+        if costo <= 0:
+            return None, None
+
+        # --- Escenario C: Regimen General Puro ---
+        # Util * t_gral = Ingreso * t_pc
+        # (C*m - G) * t_gral = C*(1+m) * t_pc
+        # m = (C*t_pc + G*t_gral) / (C*(t_gral - t_pc))
+        m_eq_gral = None
+        if (tasa_general - tasa_pc) > 0:
+            m_eq_gral = (tasa_pc * costo + tasa_general * gastos) / (costo * (tasa_general - tasa_pc))
+
+        # Si esta forzado a General, solo Escenario C
+        if es_general:
+            if m_eq_gral is not None and m_eq_gral > 0:
+                util_c = costo * m_eq_gral - gastos
+                if util_c >= 0:
+                    return m_eq_gral, "General"
+            return None, None
+
+        # --- Escenario A: Regimen Especial Puro ---
+        # Util * t_esp = Ingreso * t_pc
+        # (C*m - G) * t_esp = C*(1+m) * t_pc
+        # m = (C*t_pc + G*t_esp) / (C*(t_esp - t_pc))
+        if (tasa_especial - tasa_pc) > 0:
+            m_eq_esp = (tasa_pc * costo + tasa_especial * gastos) / (costo * (tasa_especial - tasa_pc))
+            if m_eq_esp > 0:
+                util_a = costo * m_eq_esp - gastos
+                precio_a = costo * (1 + m_eq_esp)
+                if util_a >= 0 and util_a <= limite_utilidad and precio_a <= limite_ingresos:
+                    return m_eq_esp, "Especial"
+
+        # --- Escenario B: Regimen MYPE Mixto (LA CORRECCION CLAVE) ---
+        # L*t_esp + (Util - L)*t_gral = Ingreso * t_pc
+        # L*t_esp + (C*m - G - L)*t_gral = C*(1+m)*t_pc
+        # C*m*t_gral - C*m*t_pc = C*t_pc + G*t_gral + L*t_gral - L*t_esp
+        # m = [C*t_pc + G*t_gral + L*(t_gral - t_esp)] / [C*(t_gral - t_pc)]
+        if (tasa_general - tasa_pc) > 0:
+            m_eq_mixto = (tasa_pc * costo + tasa_general * gastos + limite_utilidad * (tasa_general - tasa_especial)) / (costo * (tasa_general - tasa_pc))
+            if m_eq_mixto > 0:
+                util_b = costo * m_eq_mixto - gastos
+                precio_b = costo * (1 + m_eq_mixto)
+                # Valido solo si utilidad > limite (si no, seria Escenario A)
+                if util_b > limite_utilidad and precio_b <= limite_ingresos:
+                    return m_eq_mixto, "Mixto"
+
+        # --- Fallback a Escenario C si nada mas funciona ---
+        if m_eq_gral is not None and m_eq_gral > 0:
+            util_c = costo * m_eq_gral - gastos
+            if util_c >= 0:
+                return m_eq_gral, "General"
+
+        return None, None
+
+    def _calcular_ir_equilibrio(self, utilidad_neta, tasa_especial, tasa_general,
+                                 limite_utilidad, regimen_equilibrio):
+        """Calcula el IR en el punto de equilibrio segun el regimen determinado."""
+        if regimen_equilibrio == "Especial":
+            return utilidad_neta * tasa_especial
+        elif regimen_equilibrio == "Mixto":
+            return limite_utilidad * tasa_especial + (utilidad_neta - limite_utilidad) * tasa_general
+        else:  # General
+            return utilidad_neta * tasa_general
+
     def analizar_pagos_cuenta(self):
         """Analisis de punto de equilibrio financiero: donde IR = Pagos a Cuenta (saldo = 0, eficiencia = 100%).
 
         El margen de equilibrio es la metrica principal. El margen optimo (regimen) se muestra como referencia.
-        Formula equilibrio: m_eq = (t_pc * C + t_esp * G) / (C * (t_esp - t_pc))
+        Usa calcular_margen_equilibrio_exacto con 3 escenarios: Especial, Mixto MYPE, General.
         """
         try:
             if not hasattr(self, 'resultados'):
@@ -1498,37 +1572,21 @@ permitido en el régimen especial, maximizando el ahorro tributario.
                 margen_actual = sat['margen_optimo'] / 100
                 es_general = sat['regimen'].startswith('GENERAL')
 
-                # === MARGEN DE EQUILIBRIO: donde IR = pago a cuenta (METRICA PRINCIPAL) ===
-                margen_equilibrio = None
-                regimen_equilibrio = None
-                if not es_general and (tasa_especial - tasa_pc) > 0:
-                    m_eq = (tasa_pc * costo + tasa_especial * gastos) / (costo * (tasa_especial - tasa_pc))
-                    util_eq = costo * m_eq - gastos
-                    if util_eq >= 0 and util_eq <= limite_utilidad and costo * (1 + m_eq) <= limite_ingresos:
-                        margen_equilibrio = m_eq
-                        regimen_equilibrio = "Especial"
-                    else:
-                        if (tasa_general - tasa_pc) > 0:
-                            m_eq_gral = (tasa_pc * costo + tasa_general * gastos) / (costo * (tasa_general - tasa_pc))
-                            if m_eq_gral > 0:
-                                margen_equilibrio = m_eq_gral
-                                regimen_equilibrio = "General"
-                elif es_general and (tasa_general - tasa_pc) > 0:
-                    m_eq_gral = (tasa_pc * costo + tasa_general * gastos) / (costo * (tasa_general - tasa_pc))
-                    if m_eq_gral > 0:
-                        margen_equilibrio = m_eq_gral
-                        regimen_equilibrio = "General"
+                # === MARGEN DE EQUILIBRIO EXACTO (3 escenarios: A, B, C) ===
+                margen_equilibrio, regimen_equilibrio = self._calcular_margen_equilibrio_exacto(
+                    costo, gastos, tasa_pc, tasa_especial, tasa_general,
+                    limite_utilidad, limite_ingresos, es_general
+                )
 
                 # === Metricas EN el punto de equilibrio ===
                 if margen_equilibrio is not None:
                     precio_eq = costo * (1 + margen_equilibrio)
-                    utilidad_bruta_eq = costo * margen_equilibrio
-                    utilidad_neta_eq = max(0, utilidad_bruta_eq - gastos)
+                    utilidad_neta_eq = max(0, costo * margen_equilibrio - gastos)
                     pago_cuenta_eq = tasa_pc * precio_eq
-                    if regimen_equilibrio == "Especial":
-                        ir_eq = utilidad_neta_eq * tasa_especial
-                    else:
-                        ir_eq = utilidad_neta_eq * tasa_general
+                    ir_eq = self._calcular_ir_equilibrio(
+                        utilidad_neta_eq, tasa_especial, tasa_general,
+                        limite_utilidad, regimen_equilibrio
+                    )
                     saldo_eq = ir_eq - pago_cuenta_eq  # debe ser ~0
                     ahorro_eq = utilidad_neta_eq * tasa_general - ir_eq
                 else:
@@ -1556,7 +1614,6 @@ permitido en el régimen especial, maximizando el ahorro tributario.
 
                 margenes_test = np.linspace(margen_min, margen_max, n_pasos)
 
-                # Incluir ambos margenes en la lista
                 margenes_extras = [margen_actual]
                 if margen_equilibrio is not None:
                     margenes_extras.append(margen_equilibrio)
@@ -1565,8 +1622,7 @@ permitido en el régimen especial, maximizando el ahorro tributario.
                 sensibilidad = []
                 for m in margenes_test:
                     precio = costo * (1 + m)
-                    utilidad_bruta = costo * m
-                    utilidad_neta = max(0, utilidad_bruta - gastos)
+                    utilidad_neta = max(0, costo * m - gastos)
 
                     if es_general:
                         ir = utilidad_neta * tasa_general
@@ -1603,36 +1659,22 @@ permitido en el régimen especial, maximizando el ahorro tributario.
                         'es_equilibrio': margen_equilibrio is not None and abs(m - margen_equilibrio) < 0.0001,
                     })
 
-                # Sensibilidad bidimensional: margen equilibrio x tasas de pago a cuenta
+                # Sensibilidad 2D: recalcular equilibrio exacto para cada tasa PaC
                 tasas_pc_test = [0.5, 1.0, 1.5, 2.0, 2.5]
                 sens_2d = []
                 for t_pc in tasas_pc_test:
                     t_pc_dec = t_pc / 100
-                    # Recalcular margen de equilibrio para cada tasa
-                    m_eq_2d = None
-                    reg_2d = None
-                    if not es_general and (tasa_especial - t_pc_dec) > 0:
-                        m_eq_2d = (t_pc_dec * costo + tasa_especial * gastos) / (costo * (tasa_especial - t_pc_dec))
-                        util_2d = costo * m_eq_2d - gastos
-                        if util_2d < 0 or util_2d > limite_utilidad or costo * (1 + m_eq_2d) > limite_ingresos:
-                            if (tasa_general - t_pc_dec) > 0:
-                                m_eq_2d = (t_pc_dec * costo + tasa_general * gastos) / (costo * (tasa_general - t_pc_dec))
-                                reg_2d = "General"
-                            else:
-                                m_eq_2d = None
-                        else:
-                            reg_2d = "Especial"
-                    elif (tasa_general - t_pc_dec) > 0:
-                        m_eq_2d = (t_pc_dec * costo + tasa_general * gastos) / (costo * (tasa_general - t_pc_dec))
-                        reg_2d = "General"
+                    m_eq_2d, reg_2d = self._calcular_margen_equilibrio_exacto(
+                        costo, gastos, t_pc_dec, tasa_especial, tasa_general,
+                        limite_utilidad, limite_ingresos, es_general
+                    )
 
                     if m_eq_2d is not None and m_eq_2d > 0:
                         precio_2d = costo * (1 + m_eq_2d)
                         util_2d = max(0, costo * m_eq_2d - gastos)
-                        if reg_2d == "Especial":
-                            ir_2d = util_2d * tasa_especial
-                        else:
-                            ir_2d = util_2d * tasa_general
+                        ir_2d = self._calcular_ir_equilibrio(
+                            util_2d, tasa_especial, tasa_general, limite_utilidad, reg_2d
+                        )
                         pc_2d = t_pc_dec * precio_2d
                         ahorro_2d = util_2d * tasa_general - ir_2d
                     else:
@@ -1687,49 +1729,60 @@ permitido en el régimen especial, maximizando el ahorro tributario.
             impuesto_sin_estructura = r['matriz']['impuesto_sin_estructura']
             utilidad_sin_estructura = r['matriz']['utilidad_sin_estructura']
 
-            # Con estructura (margen optimo)
-            impuesto_matriz_con = r['matriz']['impuesto_con_estructura']
-            impuesto_satelites_opt = r['grupo']['total_impuesto_satelites']
-            impuesto_con_estructura_opt = r['grupo']['impuesto_total']
+            # Datos base
+            ingresos_matriz = r['matriz']['ingresos']
+            total_costos_satelites = sum(rpc['costo'] for rpc in resultados_pc)
 
-            # Pagos a cuenta globales
-            pc_matriz_sin = tasa_pc * r['matriz']['ingresos']
+            # Pagos a cuenta SIN estructura
+            pc_matriz_sin = tasa_pc * ingresos_matriz
             saldo_matriz_sin = impuesto_sin_estructura - pc_matriz_sin
 
-            ingresos_matriz_con = r['matriz']['ingresos']
-            pc_matriz_con = tasa_pc * ingresos_matriz_con
-            saldo_matriz_con = impuesto_matriz_con - pc_matriz_con
+            # === CONSOLIDADO EN PUNTO DE EQUILIBRIO (CORRECCION: recalcular impuesto matriz) ===
+            total_compras_eq = sum(rpc['precio_equilibrio'] for rpc in resultados_pc)
+            total_ir_eq_sats = sum(rpc['ir_equilibrio'] for rpc in resultados_pc)
+            total_pc_eq_sats = sum(rpc['pago_cuenta_eq'] for rpc in resultados_pc)
+            total_saldo_eq_sats = sum(rpc['saldo_equilibrio'] for rpc in resultados_pc)
 
-            # === CONSOLIDADO EN PUNTO DE EQUILIBRIO (METRICA PRINCIPAL) ===
-            total_ir_eq = sum(rpc['ir_equilibrio'] for rpc in resultados_pc)
-            total_pc_eq = sum(rpc['pago_cuenta_eq'] for rpc in resultados_pc)
-            total_saldo_eq = sum(rpc['saldo_equilibrio'] for rpc in resultados_pc)
-            total_ahorro_eq = sum(rpc['ahorro_equilibrio'] for rpc in resultados_pc)
+            # Recalcular utilidad e impuesto de la matriz EN EQUILIBRIO
+            # La matriz compra a los satelites a precio_equilibrio en lugar de a costo
+            utilidad_matriz_eq = utilidad_sin_estructura - total_compras_eq + total_costos_satelites
+            utilidad_matriz_eq = max(0, utilidad_matriz_eq)
+            impuesto_matriz_eq = utilidad_matriz_eq * tasa_general
+            pc_matriz_eq = tasa_pc * ingresos_matriz
+            saldo_matriz_eq = impuesto_matriz_eq - pc_matriz_eq
 
-            # Grupo en equilibrio: matriz + satelites en equilibrio
-            ir_grupo_eq = impuesto_matriz_con + total_ir_eq
-            pc_grupo_eq = pc_matriz_con + total_pc_eq
+            # Grupo en equilibrio
+            ir_grupo_eq = impuesto_matriz_eq + total_ir_eq_sats
+            pc_grupo_eq = pc_matriz_eq + total_pc_eq_sats
             saldo_grupo_eq = ir_grupo_eq - pc_grupo_eq
             eficiencia_eq = (ir_grupo_eq / pc_grupo_eq * 100) if pc_grupo_eq > 0 else 0
             utilidad_eq_sats = sum(rpc['utilidad_neta_eq'] for rpc in resultados_pc)
-            utilidad_total_eq = r['matriz']['nueva_utilidad'] + utilidad_eq_sats
+            utilidad_total_eq = utilidad_matriz_eq + utilidad_eq_sats
             tasa_efectiva_eq = (ir_grupo_eq / utilidad_total_eq * 100) if utilidad_total_eq > 0 else 0
             ahorro_eq_total = impuesto_sin_estructura - ir_grupo_eq
             ahorro_eq_pct = (ahorro_eq_total / impuesto_sin_estructura * 100) if impuesto_sin_estructura > 0 else 0
 
-            # === CONSOLIDADO EN MARGEN OPTIMO (REFERENCIA) ===
-            total_pc_opt = sum(rpc['pago_cuenta_optimo'] for rpc in resultados_pc)
-            total_ir_opt = sum(rpc['ir_optimo'] for rpc in resultados_pc)
-            total_saldo_opt = sum(rpc['saldo_optimo'] for rpc in resultados_pc)
+            # === CONSOLIDADO EN MARGEN OPTIMO (REFERENCIA - misma correccion) ===
+            total_compras_opt = sum(rpc['precio_optimo'] for rpc in resultados_pc)
+            total_ir_opt_sats = sum(rpc['ir_optimo'] for rpc in resultados_pc)
+            total_pc_opt_sats = sum(rpc['pago_cuenta_optimo'] for rpc in resultados_pc)
+            total_saldo_opt_sats = sum(rpc['saldo_optimo'] for rpc in resultados_pc)
 
-            pc_grupo_opt = pc_matriz_con + total_pc_opt
-            ir_grupo_opt = impuesto_con_estructura_opt
+            utilidad_matriz_opt = utilidad_sin_estructura - total_compras_opt + total_costos_satelites
+            utilidad_matriz_opt = max(0, utilidad_matriz_opt)
+            impuesto_matriz_opt = utilidad_matriz_opt * tasa_general
+            pc_matriz_opt = tasa_pc * ingresos_matriz
+            saldo_matriz_opt = impuesto_matriz_opt - pc_matriz_opt
+
+            ir_grupo_opt = impuesto_matriz_opt + total_ir_opt_sats
+            pc_grupo_opt = pc_matriz_opt + total_pc_opt_sats
             saldo_grupo_opt = ir_grupo_opt - pc_grupo_opt
             eficiencia_opt = (ir_grupo_opt / pc_grupo_opt * 100) if pc_grupo_opt > 0 else 0
-            utilidad_total_opt = r['matriz']['nueva_utilidad'] + r['grupo']['total_utilidad_satelites']
+            utilidad_opt_sats = r['grupo']['total_utilidad_satelites']
+            utilidad_total_opt = utilidad_matriz_opt + utilidad_opt_sats
             tasa_efectiva_opt = (ir_grupo_opt / utilidad_total_opt * 100) if utilidad_total_opt > 0 else 0
             ahorro_opt_total = impuesto_sin_estructura - ir_grupo_opt
-            ahorro_opt_pct = r['grupo']['ahorro_porcentual']
+            ahorro_opt_pct = (ahorro_opt_total / impuesto_sin_estructura * 100) if impuesto_sin_estructura > 0 else 0
 
             eficiencia_sin = (impuesto_sin_estructura / pc_matriz_sin * 100) if pc_matriz_sin > 0 else 0
             tasa_efectiva_sin = (impuesto_sin_estructura / utilidad_sin_estructura * 100) if utilidad_sin_estructura > 0 else 0
@@ -1746,9 +1799,11 @@ permitido en el régimen especial, maximizando el ahorro tributario.
                     'saldo_matriz_sin': saldo_matriz_sin,
                     'tasa_efectiva_sin': tasa_efectiva_sin,
                     'eficiencia_sin': eficiencia_sin,
-                    'impuesto_matriz_con': impuesto_matriz_con,
-                    'pc_matriz_con': pc_matriz_con,
-                    'saldo_matriz_con': saldo_matriz_con,
+                    # Matriz en equilibrio
+                    'utilidad_matriz_eq': utilidad_matriz_eq,
+                    'impuesto_matriz_eq': impuesto_matriz_eq,
+                    'pc_matriz_eq': pc_matriz_eq,
+                    'saldo_matriz_eq': saldo_matriz_eq,
                     # Equilibrio (principal)
                     'ir_grupo_eq': ir_grupo_eq,
                     'pc_grupo_eq': pc_grupo_eq,
@@ -1757,9 +1812,14 @@ permitido en el régimen especial, maximizando el ahorro tributario.
                     'tasa_efectiva_eq': tasa_efectiva_eq,
                     'ahorro_eq_total': ahorro_eq_total,
                     'ahorro_eq_pct': ahorro_eq_pct,
-                    'total_ir_eq_sats': total_ir_eq,
-                    'total_pc_eq_sats': total_pc_eq,
-                    'total_saldo_eq_sats': total_saldo_eq,
+                    'total_ir_eq_sats': total_ir_eq_sats,
+                    'total_pc_eq_sats': total_pc_eq_sats,
+                    'total_saldo_eq_sats': total_saldo_eq_sats,
+                    # Matriz en margen optimo
+                    'utilidad_matriz_opt': utilidad_matriz_opt,
+                    'impuesto_matriz_opt': impuesto_matriz_opt,
+                    'pc_matriz_opt': pc_matriz_opt,
+                    'saldo_matriz_opt': saldo_matriz_opt,
                     # Margen optimo (referencia)
                     'ir_grupo_opt': ir_grupo_opt,
                     'pc_grupo_opt': pc_grupo_opt,
@@ -1768,9 +1828,9 @@ permitido en el régimen especial, maximizando el ahorro tributario.
                     'tasa_efectiva_opt': tasa_efectiva_opt,
                     'ahorro_opt_total': ahorro_opt_total,
                     'ahorro_opt_pct': ahorro_opt_pct,
-                    'total_ir_opt_sats': total_ir_opt,
-                    'total_pc_opt_sats': total_pc_opt,
-                    'total_saldo_opt_sats': total_saldo_opt,
+                    'total_ir_opt_sats': total_ir_opt_sats,
+                    'total_pc_opt_sats': total_pc_opt_sats,
+                    'total_saldo_opt_sats': total_saldo_opt_sats,
                 },
             }
 
@@ -1801,7 +1861,10 @@ permitido en el régimen especial, maximizando el ahorro tributario.
   al fisco ({d['tasa_pago_cuenta']:.1f}% de ingresos) igualan EXACTAMENTE al IR anual definitivo.
   En este punto: saldo de regularizacion = 0, eficiencia = 100%, flujo de caja optimizado.
 
-  Formula: m_eq = (t_pc * C + t_esp * G) / (C * (t_esp - t_pc))
+  Formulas segun escenario:
+  A) Especial Puro: m = (C*t_pc + G*t_esp) / (C*(t_esp - t_pc))       [si Util <= 15 UIT]
+  B) Mixto MYPE:    m = (C*t_pc + G*t_gral + L*(t_gral-t_esp)) / (C*(t_gral-t_pc))  [si Util > 15 UIT e Ingreso <= 1700 UIT]
+  C) General Puro:  m = (C*t_pc + G*t_gral) / (C*(t_gral - t_pc))     [si Ingreso > 1700 UIT]
 
 {'='*140}
   I. IMPUESTO GLOBAL SIN ESTRUCTURA SATELITAL
@@ -1822,9 +1885,10 @@ permitido en el régimen especial, maximizando el ahorro tributario.
 {'='*140}
   A) EMPRESA MATRIZ
   {'-'*70}
-  Impuesto Matriz:                {g['impuesto_matriz_con']:>15,.2f}
-  Pagos a Cuenta Matriz:          {g['pc_matriz_con']:>15,.2f}
-  Saldo Matriz:                   {g['saldo_matriz_con']:>15,.2f}  {'(FAVOR)' if g['saldo_matriz_con'] < 0 else '(PAGAR)'}
+  Utilidad Matriz (ajustada):     {g['utilidad_matriz_eq']:>15,.2f}
+  Impuesto Matriz:                {g['impuesto_matriz_eq']:>15,.2f}
+  Pagos a Cuenta Matriz:          {g['pc_matriz_eq']:>15,.2f}
+  Saldo Matriz:                   {g['saldo_matriz_eq']:>15,.2f}  {'(FAVOR)' if g['saldo_matriz_eq'] < 0 else '(PAGAR)'}
 
   B) SATELITES EN PUNTO DE EQUILIBRIO (saldo = 0 por satelite)
   {'-'*70}
@@ -2627,9 +2691,10 @@ permitido en el régimen especial, maximizando el ahorro tributario.
 
                     datos_eq = [
                         ("--- MATRIZ ---", ""),
-                        ("Impuesto Matriz", gpc['impuesto_matriz_con']),
-                        ("PaC Matriz", gpc['pc_matriz_con']),
-                        ("Saldo Matriz", gpc['saldo_matriz_con']),
+                        ("Utilidad Matriz (ajustada)", gpc['utilidad_matriz_eq']),
+                        ("Impuesto Matriz", gpc['impuesto_matriz_eq']),
+                        ("PaC Matriz", gpc['pc_matriz_eq']),
+                        ("Saldo Matriz", gpc['saldo_matriz_eq']),
                         ("--- SATELITES EN EQUILIBRIO ---", ""),
                         ("IR Satelites (equilibrio)", gpc['total_ir_eq_sats']),
                         ("PaC Satelites (equilibrio)", gpc['total_pc_eq_sats']),
