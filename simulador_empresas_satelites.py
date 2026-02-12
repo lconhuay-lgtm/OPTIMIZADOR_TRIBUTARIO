@@ -36,6 +36,17 @@ class OptimizadorPro:
         self.COMP_TASA_DELTA = tk.DoubleVar(value=2.0) # puntos de reducción en comparativo
         self.TASA_PAGO_CUENTA = tk.DoubleVar(value=1.5)  # Tasa pago a cuenta IR (%)
 
+        # --- PARAMETROS DE SIMULACION PARA MATRIZ Y CORRELACION TERRITORIAL ---
+        self.VAR_MATRIZ_COSTOS = tk.BooleanVar(value=False)
+        self.PCT_VAR_MATRIZ_COSTOS = tk.DoubleVar(value=0.0)
+        self.VAR_MATRIZ_INGRESOS = tk.BooleanVar(value=False)
+        self.PCT_VAR_MATRIZ_INGRESOS = tk.DoubleVar(value=0.0)
+        self.DISTRIBUCION_FACTORES = tk.StringVar(value="Log-normal")
+        self.CORRELACION_MATRIZ_SAT = tk.DoubleVar(value=0.0)
+        # Widgets Entry que necesitan habilitarse/deshabilitarse
+        self.entry_pct_var_matriz_costos = None
+        self.entry_pct_var_matriz_ingresos = None
+
         
         self.satelites_entries = []
         # Almacenar figuras para exportación Excel
@@ -350,9 +361,59 @@ class OptimizadorPro:
         ttk.Label(frame_config, text="Alfa (Significancia):").grid(row=1, column=2, sticky='w', padx=10)
         ttk.Entry(frame_config, textvariable=self.ALFA_SIG, width=12).grid(row=1, column=3, padx=5, pady=5)
 
-        ttk.Button(frame_config, text="🔥 EJECUTAR ANÁLISIS DE RIESGO", command=self.ejecutar_simulacion).grid(row=2, column=0, columnspan=4, pady=10)
-        
-        self.frame_sim_container = ttk.LabelFrame(parent, text="Resultados Estadísticos", padding=15)
+        ttk.Button(frame_config, text="EJECUTAR ANALISIS DE RIESGO", command=self.ejecutar_simulacion).grid(row=2, column=0, columnspan=4, pady=10)
+
+        # --- MARCO: INCERTIDUMBRE DE LA MATRIZ Y CORRELACION TERRITORIAL ---
+        frame_matriz = ttk.LabelFrame(frame_config, text="Incertidumbre de la Matriz y Correlacion Territorial", padding=10)
+        frame_matriz.grid(row=3, column=0, columnspan=4, pady=10, sticky='ew')
+        frame_matriz.columnconfigure(1, weight=1)
+
+        # Fila 0: Checkbutton costos matriz
+        ttk.Checkbutton(frame_matriz, text="Incluir variabilidad en costos externos de la matriz",
+                        variable=self.VAR_MATRIZ_COSTOS).grid(row=0, column=0, columnspan=2, sticky='w', pady=5)
+
+        # Fila 1: Variabilidad costos matriz
+        ttk.Label(frame_matriz, text="Variabilidad costos matriz (+/-%):"
+                  ).grid(row=1, column=0, sticky='w', padx=20, pady=5)
+        self.entry_pct_var_matriz_costos = ttk.Entry(frame_matriz, textvariable=self.PCT_VAR_MATRIZ_COSTOS, width=12)
+        self.entry_pct_var_matriz_costos.grid(row=1, column=1, sticky='w', padx=5, pady=5)
+        self.entry_pct_var_matriz_costos.config(state='disabled')
+
+        # Fila 2: Checkbutton ingresos matriz
+        ttk.Checkbutton(frame_matriz, text="Incluir variabilidad en ingresos de la matriz",
+                        variable=self.VAR_MATRIZ_INGRESOS).grid(row=2, column=0, columnspan=2, sticky='w', pady=5)
+
+        # Fila 3: Variabilidad ingresos matriz
+        ttk.Label(frame_matriz, text="Variabilidad ingresos matriz (+/-%):"
+                  ).grid(row=3, column=0, sticky='w', padx=20, pady=5)
+        self.entry_pct_var_matriz_ingresos = ttk.Entry(frame_matriz, textvariable=self.PCT_VAR_MATRIZ_INGRESOS, width=12)
+        self.entry_pct_var_matriz_ingresos.grid(row=3, column=1, sticky='w', padx=5, pady=5)
+        self.entry_pct_var_matriz_ingresos.config(state='disabled')
+
+        # Fila 4: Distribucion de factores
+        ttk.Label(frame_matriz, text="Distribucion de factores:").grid(row=4, column=0, sticky='w', pady=5)
+        ttk.Combobox(frame_matriz, textvariable=self.DISTRIBUCION_FACTORES,
+                     values=["Log-normal", "Normal"], state='readonly', width=15
+                     ).grid(row=4, column=1, sticky='w', padx=5, pady=5)
+
+        # Fila 5: Correlacion matriz-satelites
+        ttk.Label(frame_matriz, text="Correlacion matriz-satelites (rho):"
+                  ).grid(row=5, column=0, sticky='w', pady=5)
+        ttk.Entry(frame_matriz, textvariable=self.CORRELACION_MATRIZ_SAT, width=12
+                  ).grid(row=5, column=1, sticky='w', padx=5, pady=5)
+
+        # Callbacks para habilitar/deshabilitar Entries
+        def _toggle_var_costos(*args):
+            state = 'normal' if self.VAR_MATRIZ_COSTOS.get() else 'disabled'
+            self.entry_pct_var_matriz_costos.config(state=state)
+        self.VAR_MATRIZ_COSTOS.trace_add('write', _toggle_var_costos)
+
+        def _toggle_var_ingresos(*args):
+            state = 'normal' if self.VAR_MATRIZ_INGRESOS.get() else 'disabled'
+            self.entry_pct_var_matriz_ingresos.config(state=state)
+        self.VAR_MATRIZ_INGRESOS.trace_add('write', _toggle_var_ingresos)
+
+        self.frame_sim_container = ttk.LabelFrame(parent, text="Resultados Estadisticos", padding=15)
         self.frame_sim_container.pack(fill='both', expand=True, padx=10, pady=10)
         self.canvas_simulacion = None
     
@@ -960,6 +1021,59 @@ permitido en el régimen especial, maximizando el ahorro tributario.
         self.canvas_graficos.draw()
         self.canvas_graficos.get_tk_widget().pack(fill='both', expand=True)
 
+    def _generar_factores_simulacion(self, n_satelites, variabilidad_sat,
+                                      var_matriz_costos, pct_var_costos,
+                                      var_matriz_ingresos, pct_var_ingresos,
+                                      distribucion, rho):
+        """Genera factores aleatorios correlacionados para una iteracion de simulacion.
+
+        Retorna: (factor_matriz_costos, factor_matriz_ingresos, lista_factores_satelites)
+        - Correlacion rho se aplica entre Z_matriz (costos) y Z de cada satelite.
+        - Ingresos de matriz se generan independientemente.
+        - Si var_matriz_costos=False, correlacion se ignora.
+        """
+        def _factor_desde_z(z, cv, dist):
+            """Convierte un valor Z~N(0,1) en un factor multiplicativo."""
+            if cv <= 0:
+                return 1.0
+            if dist == "Log-normal":
+                sigma_ln = np.sqrt(np.log(1 + cv ** 2))
+                mu_ln = -0.5 * sigma_ln ** 2
+                return float(np.exp(mu_ln + sigma_ln * z))
+            else:  # Normal
+                return max(0.0, 1.0 + cv * z)
+
+        cv_sat = variabilidad_sat / 3.0  # CV efectivo de satelites
+        cv_costos = pct_var_costos / 3.0
+        cv_ingresos = pct_var_ingresos / 3.0
+
+        # Factor costos matriz
+        Z_matriz = None
+        if var_matriz_costos:
+            Z_matriz = np.random.randn()
+            factor_costos = _factor_desde_z(Z_matriz, cv_costos, distribucion)
+        else:
+            factor_costos = 1.0
+
+        # Factor ingresos matriz (independiente)
+        if var_matriz_ingresos:
+            Z_ing = np.random.randn()
+            factor_ingresos = _factor_desde_z(Z_ing, cv_ingresos, distribucion)
+        else:
+            factor_ingresos = 1.0
+
+        # Factores por satelite (correlacionados con Z_matriz si aplica)
+        factores_sat = []
+        for _ in range(n_satelites):
+            if var_matriz_costos and Z_matriz is not None and rho != 0:
+                eps = np.random.randn()
+                Z_i = rho * Z_matriz + np.sqrt(1 - rho ** 2) * eps
+            else:
+                Z_i = np.random.randn()
+            factor_sat = _factor_desde_z(Z_i, cv_sat, distribucion)
+            factores_sat.append(factor_sat)
+
+        return factor_costos, factor_ingresos, factores_sat
 
     def ejecutar_simulacion(self):
         try:
@@ -970,18 +1084,47 @@ permitido en el régimen especial, maximizando el ahorro tributario.
             n_sim = int(self.entry_num_sim.get())
             variabilidad = float(self.entry_variabilidad.get()) / 100
 
+            # Leer parametros de variabilidad de matriz y correlacion
+            var_matriz_costos = self.VAR_MATRIZ_COSTOS.get()
+            pct_var_costos = self.PCT_VAR_MATRIZ_COSTOS.get() / 100.0
+            var_matriz_ingresos = self.VAR_MATRIZ_INGRESOS.get()
+            pct_var_ingresos = self.PCT_VAR_MATRIZ_INGRESOS.get() / 100.0
+            distribucion = self.DISTRIBUCION_FACTORES.get()
+            rho = self.CORRELACION_MATRIZ_SAT.get()
+
+            if rho < -1.0 or rho > 1.0:
+                raise ValueError("La correlacion (rho) debe estar entre -1 y 1.")
+            if pct_var_costos < 0 or pct_var_ingresos < 0:
+                raise ValueError("Los porcentajes de variabilidad deben ser >= 0.")
+
             ahorros = []
             tasa_gral = self.resultados['parametros']['tasa_general'] / 100
             tasa_esp = self.resultados['parametros']['tasa_especial'] / 100
             limite_util = self.resultados['parametros']['limite_utilidad']
 
+            # Valores base de la matriz
+            ingresos_base = self.resultados['matriz']['ingresos']
+            costos_ext_base = self.resultados['matriz']['costos_externos']
+            util_sin_est_base = self.resultados['matriz']['utilidad_sin_estructura']
+            imp_sin_est_base = self.resultados['matriz']['impuesto_sin_estructura']
+            n_sats = len(self.resultados['satelites'])
+
             for _ in range(n_sim):
+                # Generar factores correlacionados para esta iteracion
+                f_costos, f_ingresos, factores_sat = self._generar_factores_simulacion(
+                    n_sats, variabilidad, var_matriz_costos, pct_var_costos,
+                    var_matriz_ingresos, pct_var_ingresos, distribucion, rho
+                )
+
+                # Aplicar variabilidad a la matriz
+                ingresos_sim = ingresos_base * f_ingresos
+                costos_ext_sim = costos_ext_base * f_costos
+                util_sin_estructura_sim = ingresos_sim - costos_ext_sim
+                imp_sin_estructura_sim = max(0, util_sin_estructura_sim) * tasa_gral
+
                 satelites_sim = []
-                for sat in self.resultados['satelites']:
-                    # Variacion log-normal (factor multiplicativo)
-                    sigma_ln = np.sqrt(np.log(1 + (variabilidad / 3) ** 2))
-                    mu_ln = -0.5 * sigma_ln ** 2
-                    factor = np.random.lognormal(mu_ln, sigma_ln)
+                for idx, sat in enumerate(self.resultados['satelites']):
+                    factor = factores_sat[idx]
                     costo_sim = sat['costo'] * factor
                     gastos_sim = sat['gastos_operativos'] * factor
 
@@ -1016,11 +1159,11 @@ permitido en el régimen especial, maximizando el ahorro tributario.
                 total_compras = sum(s['precio_venta'] for s in satelites_sim)
                 total_costos_sat = sum(s['costo'] for s in satelites_sim)
 
-                nueva_utilidad_matriz = self.resultados['matriz']['utilidad_sin_estructura'] - total_compras + total_costos_sat
+                nueva_utilidad_matriz = util_sin_estructura_sim - total_compras + total_costos_sat
                 impuesto_matriz = max(0, nueva_utilidad_matriz) * tasa_gral
 
                 impuesto_total = impuesto_matriz + sum(s['impuesto'] for s in satelites_sim)
-                ahorro = self.resultados['matriz']['impuesto_sin_estructura'] - impuesto_total
+                ahorro = imp_sin_estructura_sim - impuesto_total
 
                 ahorros.append(ahorro)
 
@@ -1144,10 +1287,20 @@ permitido en el régimen especial, maximizando el ahorro tributario.
             ax3.grid(axis='y', alpha=0.3)
 
             # [4] Panel de estadisticos
+            mat_info = ""
+            if var_matriz_costos:
+                mat_info += f"\nVar.Costos Mat: +/-{pct_var_costos*100:.1f}%"
+            if var_matriz_ingresos:
+                mat_info += f"\nVar.Ing. Mat:   +/-{pct_var_ingresos*100:.1f}%"
+            if var_matriz_costos and rho != 0:
+                mat_info += f"\nCorrelacion:    rho={rho:.2f}"
+            if mat_info:
+                mat_info = f"\nMATRIZ:{mat_info}\nDistribucion:   {distribucion}"
+
             stats_text = f"""ESTADISTICAS SIMULACION
 {'='*34}
 Iteraciones:  {n_sim:,}
-Variabilidad: +/-{variabilidad*100:.1f}%
+Variabilidad: +/-{variabilidad*100:.1f}%{mat_info}
 
 AHORRO TRIBUTARIO:
   Media:      {media:>12,.0f}
@@ -1212,6 +1365,13 @@ LOG-NORMAL FIT:
                 'ln_shape': ln_shape if ln_ajustado else None,
                 'ln_loc': ln_loc if ln_ajustado else None,
                 'ln_scale': ln_scale if ln_ajustado else None,
+                # Parametros de variabilidad matriz y correlacion
+                'var_matriz_costos': var_matriz_costos,
+                'pct_var_costos': pct_var_costos * 100,
+                'var_matriz_ingresos': var_matriz_ingresos,
+                'pct_var_ingresos': pct_var_ingresos * 100,
+                'distribucion': distribucion,
+                'rho': rho,
             }
 
             self.canvas_simulacion = FigureCanvasTkAgg(fig, self.frame_sim_container)
@@ -1624,8 +1784,9 @@ LOG-NORMAL FIT:
     def simular_equilibrio_financiero(self):
         """Simulacion Monte Carlo estocastica del margen de equilibrio y ahorro asociado.
 
-        Varia costos y gastos con distribucion log-normal, calcula el margen de equilibrio
-        exacto para cada iteracion, aplica bootstrap e ajuste log-normal, y genera graficos.
+        Varia costos y gastos con distribucion configurable (log-normal o normal),
+        aplica correlacion territorial entre matriz y satelites, calcula el margen de
+        equilibrio exacto para cada iteracion, y genera graficos con bootstrap y ajuste log-normal.
         """
         try:
             if not hasattr(self, 'resultados'):
@@ -1635,28 +1796,52 @@ LOG-NORMAL FIT:
             n_sim = int(self.entry_n_sim_eq.get())
             variabilidad = float(self.entry_variabilidad.get()) / 100 if hasattr(self, 'entry_variabilidad') else 0.10
 
+            # Leer parametros de variabilidad de matriz y correlacion
+            var_matriz_costos = self.VAR_MATRIZ_COSTOS.get()
+            pct_var_costos = self.PCT_VAR_MATRIZ_COSTOS.get() / 100.0
+            var_matriz_ingresos = self.VAR_MATRIZ_INGRESOS.get()
+            pct_var_ingresos = self.PCT_VAR_MATRIZ_INGRESOS.get() / 100.0
+            distribucion = self.DISTRIBUCION_FACTORES.get()
+            rho = self.CORRELACION_MATRIZ_SAT.get()
+
+            if rho < -1.0 or rho > 1.0:
+                raise ValueError("La correlacion (rho) debe estar entre -1 y 1.")
+
             tasa_gral = self.resultados['parametros']['tasa_general'] / 100
             tasa_esp = self.resultados['parametros']['tasa_especial'] / 100
             tasa_pc = self.TASA_PAGO_CUENTA.get() / 100
             limite_util = self.resultados['parametros']['limite_utilidad']
             limite_ing = self.resultados['parametros']['limite_ingresos']
 
-            sigma_ln = np.sqrt(np.log(1 + (variabilidad / 3) ** 2))
-            mu_ln = -0.5 * sigma_ln ** 2
+            # Valores base de la matriz
+            ingresos_base = self.resultados['matriz']['ingresos']
+            costos_ext_base = self.resultados['matriz']['costos_externos']
+            n_sats = len(self.resultados['satelites'])
 
             margenes_eq = []
             ahorros_eq = []
             regimenes_count = {"Especial": 0, "Mixto": 0, "General": 0, "Sin_solucion": 0}
 
             for _ in range(n_sim):
-                ahorro_total_iter = 0
+                # Generar factores correlacionados
+                f_costos, f_ingresos, factores_sat = self._generar_factores_simulacion(
+                    n_sats, variabilidad, var_matriz_costos, pct_var_costos,
+                    var_matriz_ingresos, pct_var_ingresos, distribucion, rho
+                )
+
+                # Aplicar variabilidad a la matriz
+                ingresos_sim = ingresos_base * f_ingresos
+                costos_ext_sim = costos_ext_base * f_costos
+                util_sin_estructura_sim = ingresos_sim - costos_ext_sim
+                imp_sin_estructura_sim = max(0, util_sin_estructura_sim) * tasa_gral
+
                 margenes_iter = []
                 total_compras_eq_iter = 0
                 total_costos_iter = 0
                 total_ir_sats_iter = 0
 
-                for sat in self.resultados['satelites']:
-                    factor = np.random.lognormal(mu_ln, sigma_ln)
+                for idx, sat in enumerate(self.resultados['satelites']):
+                    factor = factores_sat[idx]
                     costo_sim = sat['costo'] * factor
                     gastos_sim = sat['gastos_operativos'] * factor
                     es_general = sat['regimen'].startswith('GENERAL')
@@ -1684,12 +1869,11 @@ LOG-NORMAL FIT:
                         util_fb = costo_sim * 0.05 - gastos_sim
                         total_ir_sats_iter += max(0, util_fb) * tasa_gral
 
-                # Recalcular impuesto matriz
-                util_sin = self.resultados['matriz']['utilidad_sin_estructura']
-                util_matriz_eq = max(0, util_sin - total_compras_eq_iter + total_costos_iter)
+                # Recalcular impuesto matriz con utilidad simulada
+                util_matriz_eq = max(0, util_sin_estructura_sim - total_compras_eq_iter + total_costos_iter)
                 imp_matriz_eq = util_matriz_eq * tasa_gral
                 ir_grupo_eq = imp_matriz_eq + total_ir_sats_iter
-                ahorro_iter = self.resultados['matriz']['impuesto_sin_estructura'] - ir_grupo_eq
+                ahorro_iter = imp_sin_estructura_sim - ir_grupo_eq
 
                 if margenes_iter:
                     margenes_eq.append(np.mean(margenes_iter) * 100)
@@ -1798,10 +1982,20 @@ LOG-NORMAL FIT:
 
             # [4] Panel estadisticos
             total_reg = sum(regimenes_count.values())
+            mat_eq_info = ""
+            if var_matriz_costos:
+                mat_eq_info += f"\nVar.Cost.Mat: +/-{pct_var_costos*100:.1f}%"
+            if var_matriz_ingresos:
+                mat_eq_info += f"\nVar.Ing.Mat:  +/-{pct_var_ingresos*100:.1f}%"
+            if var_matriz_costos and rho != 0:
+                mat_eq_info += f"\nCorrelacion:  rho={rho:.2f}"
+            if mat_eq_info:
+                mat_eq_info = f"\nDistribucion: {distribucion}{mat_eq_info}"
+
             stats_eq_text = f"""SIMULACION EQUILIBRIO FINANCIERO
 {'='*38}
 Iteraciones:        {n_sim:,}
-Variabilidad:       +/-{variabilidad*100:.1f}%
+Variabilidad:       +/-{variabilidad*100:.1f}%{mat_eq_info}
 
 MARGEN EQUILIBRIO:
   Media:            {np.mean(margenes_eq):>10.4f}%
@@ -1859,6 +2053,13 @@ LOG-NORMAL FIT (margen):
                 'ln_ajustado': ln_ajustado,
                 'ln_shape': ln_shape if ln_ajustado else None,
                 'ln_scale': ln_scale if ln_ajustado else None,
+                # Parametros de variabilidad matriz y correlacion
+                'var_matriz_costos': var_matriz_costos,
+                'pct_var_costos': pct_var_costos * 100,
+                'var_matriz_ingresos': var_matriz_ingresos,
+                'pct_var_ingresos': pct_var_ingresos * 100,
+                'distribucion': distribucion,
+                'rho': rho,
             }
 
             self.canvas_equilibrio_sim = FigureCanvasTkAgg(fig, self.frame_eq_sim_graficos)
@@ -2991,6 +3192,33 @@ LOG-NORMAL FIT (margen):
                             c.value = val
                             self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
 
+                    # Notas de configuracion matriz
+                    if ds.get('var_matriz_costos') or ds.get('var_matriz_ingresos'):
+                        if ds.get('ln_ajustado'):
+                            fila_nota = fila_ln + 1 + len(ln_data) + 1
+                        else:
+                            fila_nota = fila_h + 1 + len(hipotesis_data) + 1
+                        ws4.merge_cells(f'B{fila_nota}:C{fila_nota}')
+                        c = ws4[f'B{fila_nota}']
+                        c.value = "CONFIGURACION VARIABILIDAD MATRIZ"
+                        self._aplicar_estilo(c, self._estilo_subtitulo())
+                        mat_notas = []
+                        if ds.get('var_matriz_costos'):
+                            mat_notas.append(("Var. Costos Matriz", f"+/-{ds['pct_var_costos']:.1f}%"))
+                        if ds.get('var_matriz_ingresos'):
+                            mat_notas.append(("Var. Ingresos Matriz", f"+/-{ds['pct_var_ingresos']:.1f}%"))
+                        mat_notas.append(("Distribucion", ds.get('distribucion', 'Log-normal')))
+                        mat_notas.append(("Correlacion (rho)", f"{ds.get('rho', 0):.2f}"))
+                        for i, (lab, val) in enumerate(mat_notas):
+                            f = fila_nota + 1 + i
+                            c = ws4.cell(row=f, column=2)
+                            c.value = lab
+                            self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+                            c.alignment = Alignment(horizontal='left')
+                            c = ws4.cell(row=f, column=3)
+                            c.value = val
+                            self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+
                     # Grafico
                     if img_simulacion:
                         self._insertar_imagen(ws4, img_simulacion, 'E4', ancho_cm=36, alto_cm=22)
@@ -3628,6 +3856,12 @@ LOG-NORMAL FIT (margen):
                     ("Limite Ingresos Especial", f"S/ {r['parametros']['limite_ingresos']:,.2f}"),
                     ("N Empresas Satelites", f"{len(r['satelites'])}"),
                     ("Empresa Matriz", r['matriz']['nombre']),
+                    ("", ""),
+                    ("--- SIMULACION: VARIABILIDAD MATRIZ ---", ""),
+                    ("Variabilidad costos matriz (+/-%)", f"{self.PCT_VAR_MATRIZ_COSTOS.get():.1f}%" if self.VAR_MATRIZ_COSTOS.get() else "Desactivada"),
+                    ("Variabilidad ingresos matriz (+/-%)", f"{self.PCT_VAR_MATRIZ_INGRESOS.get():.1f}%" if self.VAR_MATRIZ_INGRESOS.get() else "Desactivada"),
+                    ("Distribucion factores", self.DISTRIBUCION_FACTORES.get()),
+                    ("Correlacion matriz-satelites (rho)", f"{self.CORRELACION_MATRIZ_SAT.get():.2f}"),
                 ]
 
                 headers_p = ["Parametro", "Valor"]
@@ -3779,6 +4013,32 @@ LOG-NORMAL FIT (margen):
                             c = ws10.cell(row=f, column=2)
                             c.value = lab
                             self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+                            c = ws10.cell(row=f, column=3)
+                            c.value = val
+                            self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+
+                    # Notas de configuracion matriz
+                    if deq.get('var_matriz_costos') or deq.get('var_matriz_ingresos'):
+                        fila_mat = fila_r + 1 + len(reg_data) + 1
+                        if deq.get('ln_ajustado'):
+                            fila_mat = fila_ln + 1 + 2 + 1
+                        ws10.merge_cells(f'B{fila_mat}:C{fila_mat}')
+                        c = ws10[f'B{fila_mat}']
+                        c.value = "CONFIGURACION VARIABILIDAD MATRIZ"
+                        self._aplicar_estilo(c, self._estilo_subtitulo())
+                        mat_notas = []
+                        if deq.get('var_matriz_costos'):
+                            mat_notas.append(("Var. Costos Matriz", f"+/-{deq['pct_var_costos']:.1f}%"))
+                        if deq.get('var_matriz_ingresos'):
+                            mat_notas.append(("Var. Ingresos Matriz", f"+/-{deq['pct_var_ingresos']:.1f}%"))
+                        mat_notas.append(("Distribucion", deq.get('distribucion', 'Log-normal')))
+                        mat_notas.append(("Correlacion (rho)", f"{deq.get('rho', 0):.2f}"))
+                        for i, (lab, val) in enumerate(mat_notas):
+                            f = fila_mat + 1 + i
+                            c = ws10.cell(row=f, column=2)
+                            c.value = lab
+                            self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+                            c.alignment = Alignment(horizontal='left')
                             c = ws10.cell(row=f, column=3)
                             c.value = val
                             self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
