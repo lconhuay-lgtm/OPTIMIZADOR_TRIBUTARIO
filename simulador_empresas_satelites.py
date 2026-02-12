@@ -1781,300 +1781,365 @@ LOG-NORMAL FIT:
         else:  # General
             return utilidad_neta * tasa_general
 
+    
     def simular_equilibrio_financiero(self):
-        """Simulacion Monte Carlo estocastica del margen de equilibrio y ahorro asociado.
-
-        Varia costos y gastos con distribucion configurable (log-normal o normal),
-        aplica correlacion territorial entre matriz y satelites, calcula el margen de
-        equilibrio exacto para cada iteracion, y genera graficos con bootstrap y ajuste log-normal.
+        """
+        SIMULACIÓN MONTE CARLO – DISTRIBUCIÓN DEL SALDO DE REGULARIZACIÓN (PAGO MARZO).
+        Compara el escenario ÓPTIMO (máximo ahorro) vs EQUILIBRIO (saldo ~ 0).
+        Incluye:
+          - Bootstrap percentil para IC y p‑valor.
+          - Gráficos: densidad del grupo + violines por empresa.
+          - Reporte de percentiles y reducción de riesgo.
         """
         try:
             if not hasattr(self, 'resultados'):
-                messagebox.showwarning("Advertencia", "Primero debe calcular los margenes optimos")
+                messagebox.showwarning("Advertencia", "Primero debe calcular los márgenes óptimos")
                 return
-
+    
+            # --------------------------------------------------------------
+            # 1. CONFIGURACIÓN DE LA SIMULACIÓN
+            # --------------------------------------------------------------
             n_sim = int(self.entry_n_sim_eq.get())
             variabilidad = float(self.entry_variabilidad.get()) / 100 if hasattr(self, 'entry_variabilidad') else 0.10
-
-            # Leer parametros de variabilidad de matriz y correlacion
+    
+            # Parámetros de incertidumbre de la matriz y correlación
             var_matriz_costos = self.VAR_MATRIZ_COSTOS.get()
             pct_var_costos = self.PCT_VAR_MATRIZ_COSTOS.get() / 100.0
             var_matriz_ingresos = self.VAR_MATRIZ_INGRESOS.get()
             pct_var_ingresos = self.PCT_VAR_MATRIZ_INGRESOS.get() / 100.0
             distribucion = self.DISTRIBUCION_FACTORES.get()
             rho = self.CORRELACION_MATRIZ_SAT.get()
-
             if rho < -1.0 or rho > 1.0:
-                raise ValueError("La correlacion (rho) debe estar entre -1 y 1.")
-
+                raise ValueError("La correlación (rho) debe estar entre -1 y 1.")
+    
+            # Parámetros tributarios
             tasa_gral = self.resultados['parametros']['tasa_general'] / 100
             tasa_esp = self.resultados['parametros']['tasa_especial'] / 100
             tasa_pc = self.TASA_PAGO_CUENTA.get() / 100
             limite_util = self.resultados['parametros']['limite_utilidad']
             limite_ing = self.resultados['parametros']['limite_ingresos']
-
-            # Valores base de la matriz
-            ingresos_base = self.resultados['matriz']['ingresos']
-            costos_ext_base = self.resultados['matriz']['costos_externos']
+    
+            # Datos base de la matriz
+            ingresos_matriz_base = self.resultados['matriz']['ingresos']
+            costos_matriz_base = self.resultados['matriz']['costos_externos']
             n_sats = len(self.resultados['satelites'])
-
-            margenes_eq = []
-            ahorros_eq = []
-            regimenes_count = {"Especial": 0, "Mixto": 0, "General": 0, "Sin_solucion": 0}
-
+    
+            # --------------------------------------------------------------
+            # 2. ESTRUCTURA PARA ALMACENAR HISTORIAL DE SALDOS
+            # --------------------------------------------------------------
+            # Cada clave guarda dos listas: 'opt' (escenario óptimo) y 'eq' (equilibrio)
+            historial_saldos = {
+                'Matriz': {'opt': [], 'eq': []},
+                'Grupo_Total': {'opt': [], 'eq': []}
+            }
+            for sat in self.resultados['satelites']:
+                historial_saldos[sat['nombre']] = {'opt': [], 'eq': []}
+    
+            # --------------------------------------------------------------
+            # 3. BUCLE PRINCIPAL DE MONTE CARLO
+            # --------------------------------------------------------------
             for _ in range(n_sim):
-                # Generar factores correlacionados
-                f_costos, f_ingresos, factores_sat = self._generar_factores_simulacion(
-                    n_sats, variabilidad, var_matriz_costos, pct_var_costos,
-                    var_matriz_ingresos, pct_var_ingresos, distribucion, rho
+                # A) Factores aleatorios correlacionados
+                f_costos_m, f_ingresos_m, factores_sat = self._generar_factores_simulacion(
+                    n_sats, variabilidad,
+                    var_matriz_costos, pct_var_costos,
+                    var_matriz_ingresos, pct_var_ingresos,
+                    distribucion, rho
                 )
-
-                # Aplicar variabilidad a la matriz
-                ingresos_sim = ingresos_base * f_ingresos
-                costos_ext_sim = costos_ext_base * f_costos
-                util_sin_estructura_sim = ingresos_sim - costos_ext_sim
-                imp_sin_estructura_sim = max(0, util_sin_estructura_sim) * tasa_gral
-
-                margenes_iter = []
-                total_compras_eq_iter = 0
-                total_costos_iter = 0
-                total_ir_sats_iter = 0
-
+    
+                # B) Simular la matriz base
+                ingresos_sim = ingresos_matriz_base * f_ingresos_m
+                costos_m_sim = costos_matriz_base * f_costos_m
+                util_base_sim = max(0, ingresos_sim - costos_m_sim)  # utilidad antes de compras a satélites
+                pac_matriz = tasa_pc * ingresos_sim   # pago a cuenta fijo (depende de ingresos)
+    
+                # Acumuladores para el grupo
+                saldo_grupo_opt = 0.0
+                saldo_grupo_eq = 0.0
+                compras_opt_total = 0.0
+                compras_eq_total = 0.0
+                costos_sats_total = 0.0
+    
+                # C) Simular cada satélite
                 for idx, sat in enumerate(self.resultados['satelites']):
                     factor = factores_sat[idx]
                     costo_sim = sat['costo'] * factor
                     gastos_sim = sat['gastos_operativos'] * factor
-                    es_general = sat['regimen'].startswith('GENERAL')
-
-                    margen, regimen = self._calcular_margen_equilibrio_exacto(
-                        costo_sim, gastos_sim, tasa_pc, tasa_esp,
-                        tasa_gral, limite_util, limite_ing, es_general
-                    )
-
-                    if margen is not None:
-                        margenes_iter.append(margen)
-                        precio_eq = costo_sim * (1 + margen)
-                        util_eq = costo_sim * margen - gastos_sim
-                        ir_eq = self._calcular_ir_equilibrio(util_eq, tasa_esp, tasa_gral,
-                                                              limite_util, regimen)
-                        regimenes_count[regimen] += 1
-                        total_compras_eq_iter += precio_eq
-                        total_costos_iter += costo_sim
-                        total_ir_sats_iter += ir_eq
+                    es_gral = sat['regimen'].startswith('GENERAL')
+                    costos_sats_total += costo_sim
+    
+                    # ========== ESCENARIO 1: MARGEN ÓPTIMO (maximiza ahorro) ==========
+                    if costo_sim > 0:
+                        if es_gral:
+                            # RÉGIMEN GENERAL: margen de equilibrio operativo (utilidad neta cero)
+                            m_opt = (gastos_sim / costo_sim) if gastos_sim > 0 else 0.0
+                        else:
+                            # RÉGIMEN ESPECIAL: fórmula estándar (maximiza utilidad hasta el límite)
+                            m_opt = (limite_util + gastos_sim) / costo_sim
+                            # Ajuste por límite de ingresos
+                            if costo_sim * (1 + m_opt) > limite_ing:
+                                m_opt = (limite_ing / costo_sim) - 1
                     else:
-                        regimenes_count["Sin_solucion"] += 1
-                        precio_eq = costo_sim * 1.05
-                        total_compras_eq_iter += precio_eq
-                        total_costos_iter += costo_sim
-                        util_fb = costo_sim * 0.05 - gastos_sim
-                        total_ir_sats_iter += max(0, util_fb) * tasa_gral
-
-                # Recalcular impuesto matriz con utilidad simulada
-                util_matriz_eq = max(0, util_sin_estructura_sim - total_compras_eq_iter + total_costos_iter)
+                        m_opt = 0.0
+    
+                    precio_opt = costo_sim * (1 + m_opt)
+                    util_opt = max(0, precio_opt - costo_sim - gastos_sim)
+    
+                    # Impuesto según régimen (óptimo)
+                    if es_gral:
+                        ir_opt = util_opt * tasa_gral
+                    elif util_opt <= limite_util:
+                        ir_opt = util_opt * tasa_esp
+                    else:
+                        ir_opt = limite_util * tasa_esp + (util_opt - limite_util) * tasa_gral
+    
+                    pac_opt = tasa_pc * precio_opt
+                    saldo_opt = ir_opt - pac_opt
+    
+                    compras_opt_total += precio_opt
+                    saldo_grupo_opt += saldo_opt
+                    historial_saldos[sat['nombre']]['opt'].append(saldo_opt)
+    
+                    # ========== ESCENARIO 2: MARGEN DE EQUILIBRIO (IR = PaC) ==========
+                    m_eq, reg_eq = self._calcular_margen_equilibrio_exacto(
+                        costo_sim, gastos_sim, tasa_pc, tasa_esp, tasa_gral,
+                        limite_util, limite_ing, es_gral
+                    )
+                    if m_eq is None:
+                        m_eq = m_opt   # fallback al margen óptimo si no hay equilibrio factible
+    
+                    precio_eq = costo_sim * (1 + m_eq)
+                    util_eq = max(0, precio_eq - costo_sim - gastos_sim)
+                    ir_eq = self._calcular_ir_equilibrio(
+                        util_eq, tasa_esp, tasa_gral, limite_util, reg_eq or "General"
+                    )
+                    pac_eq = tasa_pc * precio_eq
+                    saldo_eq = ir_eq - pac_eq
+    
+                    compras_eq_total += precio_eq
+                    saldo_grupo_eq += saldo_eq
+                    historial_saldos[sat['nombre']]['eq'].append(saldo_eq)
+    
+                # D) Calcular la matriz final para ambos escenarios
+                # ---- Escenario Óptimo ----
+                util_matriz_opt = max(0, util_base_sim - compras_opt_total + costos_sats_total)
+                imp_matriz_opt = util_matriz_opt * tasa_gral
+                saldo_matriz_opt = imp_matriz_opt - pac_matriz
+    
+                # ---- Escenario Equilibrio ----
+                util_matriz_eq = max(0, util_base_sim - compras_eq_total + costos_sats_total)
                 imp_matriz_eq = util_matriz_eq * tasa_gral
-                ir_grupo_eq = imp_matriz_eq + total_ir_sats_iter
-                ahorro_iter = imp_sin_estructura_sim - ir_grupo_eq
-
-                if margenes_iter:
-                    margenes_eq.append(np.mean(margenes_iter) * 100)
-                ahorros_eq.append(ahorro_iter)
-
-            margenes_eq = np.array(margenes_eq)
-            ahorros_eq = np.array(ahorros_eq)
-
-            # Bootstrap percentil IC
+                saldo_matriz_eq = imp_matriz_eq - pac_matriz
+    
+                # Guardar historiales de matriz y grupo
+                historial_saldos['Matriz']['opt'].append(saldo_matriz_opt)
+                historial_saldos['Matriz']['eq'].append(saldo_matriz_eq)
+    
+                historial_saldos['Grupo_Total']['opt'].append(saldo_matriz_opt + saldo_grupo_opt)
+                historial_saldos['Grupo_Total']['eq'].append(saldo_matriz_eq + saldo_grupo_eq)
+    
+            # --------------------------------------------------------------
+            # 4. ESTADÍSTICAS AVANZADAS (BOOTSTRAP)
+            # --------------------------------------------------------------
+            saldos_g_opt = np.array(historial_saldos['Grupo_Total']['opt'])
+            saldos_g_eq  = np.array(historial_saldos['Grupo_Total']['eq'])
+    
+            # Bootstrap percentil para la media del saldo en equilibrio
             conf_val = self.CONF_NIVEL.get() / 100
-            alfa_val = self.ALFA_SIG.get()
-            n_boot = 3000
-
-            if len(margenes_eq) > 10:
-                boot_margenes = np.array([
-                    np.mean(np.random.choice(margenes_eq, size=len(margenes_eq), replace=True))
-                    for _ in range(n_boot)
-                ])
-                alpha_boot = 1 - conf_val
-                ic_margen_lo = np.percentile(boot_margenes, 100 * alpha_boot / 2)
-                ic_margen_hi = np.percentile(boot_margenes, 100 * (1 - alpha_boot / 2))
-            else:
-                ic_margen_lo = ic_margen_hi = np.mean(margenes_eq) if len(margenes_eq) > 0 else 0
-
-            boot_ahorros = np.array([
-                np.mean(np.random.choice(ahorros_eq, size=len(ahorros_eq), replace=True))
+            n_boot = 5000
+            rng = np.random.default_rng(42)
+    
+            boot_eq = np.array([
+                np.mean(rng.choice(saldos_g_eq, size=len(saldos_g_eq), replace=True))
                 for _ in range(n_boot)
             ])
-            ic_ahorro_lo = np.percentile(boot_ahorros, 100 * (1 - conf_val) / 2)
-            ic_ahorro_hi = np.percentile(boot_ahorros, 100 * (1 + conf_val) / 2)
-            p_valor_boot = max(np.mean(boot_ahorros <= 0), 1 / n_boot)
-
-            # Ajuste Log-Normal al margen
-            ln_ajustado = False
-            ln_shape = ln_loc = ln_scale = 0
-            margenes_pos = margenes_eq[margenes_eq > 0]
-            if len(margenes_pos) > 50:
-                try:
-                    ln_shape, ln_loc, ln_scale = stats.lognorm.fit(margenes_pos, floc=0)
-                    ln_ajustado = True
-                except Exception:
-                    pass
-
-            # --- GRAFICOS ---
+            alpha = 1 - conf_val
+            ic_eq_low = np.percentile(boot_eq, 100 * alpha / 2)
+            ic_eq_high = np.percentile(boot_eq, 100 * (1 - alpha / 2))
+    
+            # Bootstrap para la diferencia de medias (óptimo - equilibrio)
+            boot_diff = np.array([
+                np.mean(rng.choice(saldos_g_opt, size=len(saldos_g_opt), replace=True)) -
+                np.mean(rng.choice(saldos_g_eq,   size=len(saldos_g_eq),   replace=True))
+                for _ in range(n_boot)
+            ])
+            p_valor_diff = np.mean(boot_diff <= 0)   # unilateral: H1: media_opt > media_eq
+            p_valor_diff = max(p_valor_diff, 1 / n_boot)
+    
+            # Estadísticas descriptivas
+            stats_eq = {
+                'media': np.mean(saldos_g_eq),
+                'mediana': np.median(saldos_g_eq),
+                'std': np.std(saldos_g_eq),
+                'p5': np.percentile(saldos_g_eq, 5),
+                'p25': np.percentile(saldos_g_eq, 25),
+                'p75': np.percentile(saldos_g_eq, 75),
+                'p95': np.percentile(saldos_g_eq, 95),
+                'ic_low': ic_eq_low,
+                'ic_high': ic_eq_high
+            }
+            stats_opt = {
+                'media': np.mean(saldos_g_opt),
+                'mediana': np.median(saldos_g_opt),
+                'p95': np.percentile(saldos_g_opt, 95)
+            }
+    
+            # --------------------------------------------------------------
+            # 5. VISUALIZACIÓN AVANZADA (DENSIDAD + VIOLINES)
+            # --------------------------------------------------------------
             if self.canvas_equilibrio_sim:
                 self.canvas_equilibrio_sim.get_tk_widget().destroy()
-
-            fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(14, 10))
-            fig.suptitle(f'Simulacion Equilibrio Financiero ({n_sim:,} iter.)',
-                         fontsize=14, fontweight='bold')
-
-            # [1] Histograma margenes + Log-Normal
-            if len(margenes_eq) > 0:
-                ax1.hist(margenes_eq, bins=50, color='#2E75B6', alpha=0.6, edgecolor='black',
-                         density=True, label='Margenes simulados')
-                if ln_ajustado:
-                    x_ln = np.linspace(max(0.01, margenes_eq.min()), margenes_eq.max(), 300)
-                    pdf_ln = stats.lognorm.pdf(x_ln, ln_shape, ln_loc, ln_scale)
-                    ax1.plot(x_ln, pdf_ln, 'r-', linewidth=2,
-                             label=f'Log-Normal (s={ln_shape:.3f})')
-                ax1.axvline(np.mean(margenes_eq), color='orange', linestyle='--', linewidth=2,
-                            label=f'Media: {np.mean(margenes_eq):.4f}%')
-                ax1.axvline(np.median(margenes_eq), color='green', linestyle=':', linewidth=2,
-                            label=f'Mediana: {np.median(margenes_eq):.4f}%')
-            ax1.set_xlabel('Margen Equilibrio (%)', fontsize=10)
-            ax1.set_ylabel('Densidad', fontsize=10)
-            ax1.set_title('Distribucion Margen de Equilibrio', fontsize=11, fontweight='bold')
-            ax1.legend(fontsize=7)
-            ax1.grid(alpha=0.3)
-
-            # [2] Histograma ahorros en equilibrio
-            ax2.hist(ahorros_eq, bins=50, color='#2ecc71', alpha=0.6, edgecolor='black',
-                     density=True, label='Ahorros simulados')
-            ax2.axvline(np.mean(ahorros_eq), color='orange', linestyle='--', linewidth=2,
-                        label=f'Media: {np.mean(ahorros_eq):,.0f}')
-            ax2.fill_betweenx([0, ax2.get_ylim()[1] if ax2.get_ylim()[1] > 0 else 0.001],
-                              ic_ahorro_lo, ic_ahorro_hi, alpha=0.15, color='red',
-                              label=f'IC {conf_val*100:.0f}%')
-            ax2.set_xlabel('Ahorro Tributario en Equilibrio (S/)', fontsize=10)
-            ax2.set_ylabel('Densidad', fontsize=10)
-            ax2.set_title('Distribucion Ahorro en Equilibrio', fontsize=11, fontweight='bold')
-            ax2.legend(fontsize=7)
-            ax2.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1000:.0f}K'))
-            ax2.grid(alpha=0.3)
-
-            # [3] Violin margen + ahorro
-            if len(margenes_eq) > 0:
-                parts_m = ax3.violinplot(margenes_eq, positions=[1], showmeans=True,
-                                         showmedians=True, showextrema=False)
-                for pc in parts_m['bodies']:
-                    pc.set_facecolor('#2E75B6')
-                    pc.set_alpha(0.5)
-                ax3_twin = ax3.twinx()
-                parts_a = ax3_twin.violinplot(ahorros_eq, positions=[2], showmeans=True,
-                                               showmedians=True, showextrema=False)
-                for pc in parts_a['bodies']:
-                    pc.set_facecolor('#2ecc71')
-                    pc.set_alpha(0.5)
-                ax3.set_xticks([1, 2])
-                ax3.set_xticklabels(['Margen Eq.(%)', 'Ahorro Eq.(S/)'])
-                ax3.set_ylabel('Margen (%)', color='#2E75B6', fontsize=10)
-                ax3_twin.set_ylabel('Ahorro (S/)', color='#2ecc71', fontsize=10)
-                ax3_twin.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1000:.0f}K'))
-            ax3.set_title('Violin: Margen y Ahorro', fontsize=11, fontweight='bold')
-            ax3.grid(axis='y', alpha=0.3)
-
-            # [4] Panel estadisticos
-            total_reg = sum(regimenes_count.values())
-            mat_eq_info = ""
-            if var_matriz_costos:
-                mat_eq_info += f"\nVar.Cost.Mat: +/-{pct_var_costos*100:.1f}%"
-            if var_matriz_ingresos:
-                mat_eq_info += f"\nVar.Ing.Mat:  +/-{pct_var_ingresos*100:.1f}%"
-            if var_matriz_costos and rho != 0:
-                mat_eq_info += f"\nCorrelacion:  rho={rho:.2f}"
-            if mat_eq_info:
-                mat_eq_info = f"\nDistribucion: {distribucion}{mat_eq_info}"
-
-            stats_eq_text = f"""SIMULACION EQUILIBRIO FINANCIERO
-{'='*38}
-Iteraciones:        {n_sim:,}
-Variabilidad:       +/-{variabilidad*100:.1f}%{mat_eq_info}
-
-MARGEN EQUILIBRIO:
-  Media:            {np.mean(margenes_eq):>10.4f}%
-  Mediana:          {np.median(margenes_eq):>10.4f}%
-  Desv.Est:         {np.std(margenes_eq):>10.4f}%
-  IC {conf_val*100:.0f}% Boot:     [{ic_margen_lo:.4f}%, {ic_margen_hi:.4f}%]
-
-AHORRO EN EQUILIBRIO:
-  Media:            {np.mean(ahorros_eq):>12,.0f}
-  IC {conf_val*100:.0f}% Boot:     [{ic_ahorro_lo:>12,.0f},
-                     {ic_ahorro_hi:>12,.0f}]
-  P-valor (boot):   {p_valor_boot:.4e}
-
-REGIMENES ({total_reg} eval.):
-  Especial: {regimenes_count['Especial']:>6} ({regimenes_count['Especial']/max(1,total_reg)*100:.1f}%)
-  Mixto:    {regimenes_count['Mixto']:>6} ({regimenes_count['Mixto']/max(1,total_reg)*100:.1f}%)
-  General:  {regimenes_count['General']:>6} ({regimenes_count['General']/max(1,total_reg)*100:.1f}%)
-  Sin sol.: {regimenes_count['Sin_solucion']:>6}"""
-            if ln_ajustado:
-                stats_eq_text += f"""
-
-LOG-NORMAL FIT (margen):
-  Shape(s):  {ln_shape:.4f}
-  Scale:     {ln_scale:.4f}"""
-
-            ax4.axis('off')
-            ax4.text(0.05, 0.95, stats_eq_text, transform=ax4.transAxes,
-                     fontsize=7.5, verticalalignment='top', fontfamily='monospace',
-                     bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.5))
-
+    
+            fig = plt.figure(figsize=(14, 10))
+            gs = fig.add_gridspec(2, 1, height_ratios=[1, 2])
+    
+            # ----- PANEL SUPERIOR: DENSIDAD DEL GRUPO CONSOLIDADO -----
+            ax1 = fig.add_subplot(gs[0])
+    
+            # Estimación de densidad kernel (KDE) para suavizar
+            from scipy.stats import gaussian_kde
+            kde_opt = gaussian_kde(saldos_g_opt)
+            kde_eq  = gaussian_kde(saldos_g_eq)
+    
+            x_min = min(saldos_g_opt.min(), saldos_g_eq.min())
+            x_max = max(saldos_g_opt.max(), saldos_g_eq.max())
+            x = np.linspace(x_min, x_max, 300)
+    
+            ax1.fill_between(x, kde_opt(x), alpha=0.4, color='#E74C3C', label='Óptimo (riesgo)')
+            ax1.fill_between(x, kde_eq(x),  alpha=0.5, color='#27AE60', label='Equilibrio (estable)')
+    
+            # Líneas de referencia
+            ax1.axvline(stats_eq['media'], color='#1E8449', linestyle='--', linewidth=2,
+                        label=f"Media Eq: {stats_eq['media']/1000:.0f}k")
+            ax1.axvline(stats_eq['p95'],   color='#0B5345', linestyle=':', linewidth=1.5,
+                        label=f"P95 Eq: {stats_eq['p95']/1000:.0f}k")
+            ax1.axvline(stats_opt['p95'],  color='#943126', linestyle=':', linewidth=1.5,
+                        label=f"P95 Opt: {stats_opt['p95']/1000:.0f}k")
+    
+            ax1.set_title(f'DISTRIBUCIÓN DEL SALDO DE REGULARIZACIÓN (GRUPO) – {n_sim} escenarios',
+                          fontsize=12, fontweight='bold')
+            ax1.set_xlabel('Saldo a pagar en Marzo (S/)')
+            ax1.set_ylabel('Densidad')
+            ax1.yaxis.set_visible(False)   # solo queremos ver la forma
+            ax1.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1000:.0f}k'))
+            ax1.legend(loc='upper right', fontsize=9)
+    
+            # Recuadro con estadísticas clave
+            textstr = f"Equilibrio vs Óptimo\n"
+            textstr += f"Media:    {stats_eq['media']/1000:.0f}k vs {stats_opt['media']/1000:.0f}k\n"
+            textstr += f"P95:      {stats_eq['p95']/1000:.0f}k vs {stats_opt['p95']/1000:.0f}k\n"
+            textstr += f"Reducción P95: {100*(1 - stats_eq['p95']/stats_opt['p95']):.1f}%\n"
+            textstr += f"IC 95% Eq: [{stats_eq['ic_low']/1000:.0f}k , {stats_eq['ic_high']/1000:.0f}k]\n"
+            textstr += f"p-valor (media Opt > Eq): {p_valor_diff:.4f}"
+    
+            props = dict(boxstyle='round', facecolor='wheat', alpha=0.8)
+            ax1.text(0.98, 0.95, textstr, transform=ax1.transAxes, fontsize=9,
+                     verticalalignment='top', horizontalalignment='right',
+                     bbox=props)
+    
+            # ----- PANEL INFERIOR: VIOLINPLOT POR EMPRESA -----
+            ax2 = fig.add_subplot(gs[1])
+    
+            empresas = ['Matriz'] + [s['nombre'] for s in self.resultados['satelites']]
+            data_opt = [historial_saldos[emp]['opt'] for emp in empresas]
+            data_eq  = [historial_saldos[emp]['eq']  for emp in empresas]
+    
+            posiciones = np.arange(len(empresas)) * 2.0
+            ancho = 0.7
+    
+            # Violinplots para escenario óptimo (rojo)
+            vp_opt = ax2.violinplot(data_opt, positions=posiciones - 0.4,
+                                     widths=ancho, showmeans=False, showmedians=True)
+            for pc in vp_opt['bodies']:
+                pc.set_facecolor('#E74C3C')
+                pc.set_alpha(0.5)
+                pc.set_edgecolor('#C0392B')
+            vp_opt['cmedians'].set_color('#C0392B')
+            vp_opt['cmedians'].set_linewidth(1.5)
+    
+            # Violinplots para escenario equilibrio (verde)
+            vp_eq = ax2.violinplot(data_eq, positions=posiciones + 0.4,
+                                    widths=ancho, showmeans=False, showmedians=True)
+            for pc in vp_eq['bodies']:
+                pc.set_facecolor('#27AE60')
+                pc.set_alpha(0.6)
+                pc.set_edgecolor('#1E8449')
+            vp_eq['cmedians'].set_color('#1E8449')
+            vp_eq['cmedians'].set_linewidth(1.5)
+    
+            # Línea horizontal en cero
+            ax2.axhline(0, color='black', linewidth=0.8, linestyle='-', alpha=0.7)
+            ax2.text(posiciones[-1] + 1.2, 0, 'Saldo 0', va='center', fontsize=8)
+    
+            ax2.set_title('RIESGO DE REGULARIZACIÓN POR EMPRESA (Óptimo vs Equilibrio)',
+                          fontsize=12, fontweight='bold')
+            ax2.set_xticks(posiciones)
+            ax2.set_xticklabels(empresas, fontsize=9, fontweight='bold')
+            ax2.set_ylabel('Saldo a Regularizar en Marzo (S/)')
+            ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1000:.0f}k'))
+            ax2.grid(axis='y', alpha=0.2, linestyle='--')
+    
+            # Leyenda personalizada
+            from matplotlib.patches import Patch
+            legend_elements = [
+                Patch(facecolor='#E74C3C', alpha=0.6, edgecolor='#C0392B',
+                      label='Escenario Óptimo (máx. ahorro)'),
+                Patch(facecolor='#27AE60', alpha=0.7, edgecolor='#1E8449',
+                      label='Escenario Equilibrio (saldo ~0)')
+            ]
+            ax2.legend(handles=legend_elements, loc='upper right', fontsize=9)
+    
             plt.tight_layout()
-
             self.fig_equilibrio_sim = fig
+    
+            # --------------------------------------------------------------
+            # 6. GUARDAR RESULTADOS PARA EXPORTACIÓN
+            # --------------------------------------------------------------
             self.datos_equilibrio_sim = {
                 'n_sim': n_sim,
                 'variabilidad': variabilidad * 100,
-                'margen_media': float(np.mean(margenes_eq)) if len(margenes_eq) > 0 else 0,
-                'margen_mediana': float(np.median(margenes_eq)) if len(margenes_eq) > 0 else 0,
-                'margen_std': float(np.std(margenes_eq)) if len(margenes_eq) > 0 else 0,
-                'margen_p5': float(np.percentile(margenes_eq, 5)) if len(margenes_eq) > 0 else 0,
-                'margen_p95': float(np.percentile(margenes_eq, 95)) if len(margenes_eq) > 0 else 0,
-                'ic_margen_lower': ic_margen_lo,
-                'ic_margen_upper': ic_margen_hi,
-                'ahorro_media': float(np.mean(ahorros_eq)),
-                'ahorro_mediana': float(np.median(ahorros_eq)),
-                'ahorro_std': float(np.std(ahorros_eq)),
-                'ahorro_p5': float(np.percentile(ahorros_eq, 5)),
-                'ahorro_p95': float(np.percentile(ahorros_eq, 95)),
-                'ic_ahorro_lower': ic_ahorro_lo,
-                'ic_ahorro_upper': ic_ahorro_hi,
-                'p_valor_boot': p_valor_boot,
-                'conf_nivel': conf_val * 100,
-                'alfa': alfa_val,
-                'regimenes': regimenes_count,
-                'ln_ajustado': ln_ajustado,
-                'ln_shape': ln_shape if ln_ajustado else None,
-                'ln_scale': ln_scale if ln_ajustado else None,
-                # Parametros de variabilidad matriz y correlacion
-                'var_matriz_costos': var_matriz_costos,
-                'pct_var_costos': pct_var_costos * 100,
-                'var_matriz_ingresos': var_matriz_ingresos,
-                'pct_var_ingresos': pct_var_ingresos * 100,
-                'distribucion': distribucion,
-                'rho': rho,
+                'config': {
+                    'var_matriz_costos': var_matriz_costos,
+                    'pct_var_costos': pct_var_costos * 100,
+                    'var_matriz_ingresos': var_matriz_ingresos,
+                    'pct_var_ingresos': pct_var_ingresos * 100,
+                    'distribucion': distribucion,
+                    'rho': rho
+                },
+                'grupo_eq': stats_eq,
+                'grupo_opt': stats_opt,
+                'p_valor_diferencia': p_valor_diff,
+                'historial_saldos': historial_saldos,   # guardado para posible exportación
+                'empresas': empresas
             }
-
+    
             self.canvas_equilibrio_sim = FigureCanvasTkAgg(fig, self.frame_eq_sim_graficos)
             self.canvas_equilibrio_sim.draw()
             self.canvas_equilibrio_sim.get_tk_widget().pack(fill='both', expand=True)
-
-            messagebox.showinfo("Simulacion Equilibrio Completa",
-                                f"Margen equilibrio medio: {np.mean(margenes_eq):.4f}%\n"
-                                f"Ahorro medio equilibrio: {np.mean(ahorros_eq):,.0f}\n"
-                                f"IC {conf_val*100:.0f}%: [{ic_ahorro_lo:,.0f}, {ic_ahorro_hi:,.0f}]\n"
-                                f"P-valor (bootstrap): {p_valor_boot:.4e}")
-
+    
+            # --------------------------------------------------------------
+            # 7. MENSAJE DE FINALIZACIÓN
+            # --------------------------------------------------------------
+            messagebox.showinfo(
+                "Simulación de Equilibrio Financiero",
+                f"Análisis completado.\n\n"
+                f"Saldo medio en equilibrio: {stats_eq['media']:,.0f}\n"
+                f"IC 95%: [{stats_eq['ic_low']:,.0f} , {stats_eq['ic_high']:,.0f}]\n"
+                f"Reducción del P95: {100*(1 - stats_eq['p95']/stats_opt['p95']):.1f}%\n"
+                f"p-valor (óptimo > equilibrio): {p_valor_diff:.4f}"
+            )
+    
         except Exception as e:
-            messagebox.showerror("Error", f"Error en simulacion equilibrio: {str(e)}")
+            messagebox.showerror("Error", f"Error en simulación de equilibrio:\n{str(e)}")
+            import traceback
+            traceback.print_exc()   # para depuración en consola
 
+
+
+ 
+    
+    
+    
     def analizar_pagos_cuenta(self):
         """Analisis de punto de equilibrio financiero: donde IR = Pagos a Cuenta (saldo = 0, eficiencia = 100%).
 
