@@ -1615,12 +1615,84 @@ permitido en el régimen especial, maximizando el ahorro tributario.
                     'es_general': es_general,
                 })
 
+            # --- ANALISIS GLOBAL: SIN ESTRUCTURA vs CON ESTRUCTURA (enfoque equilibrio financiero) ---
+            r = self.resultados
+            impuesto_sin_estructura = r['matriz']['impuesto_sin_estructura']
+            utilidad_sin_estructura = r['matriz']['utilidad_sin_estructura']
+
+            # Con estructura: impuestos del grupo
+            impuesto_matriz_con = r['matriz']['impuesto_con_estructura']
+            impuesto_satelites = r['grupo']['total_impuesto_satelites']
+            impuesto_con_estructura = r['grupo']['impuesto_total']
+
+            # Pagos a cuenta globales
+            # Matriz: sin satelites tributa 29.5%, su pago a cuenta es sobre ingresos totales
+            pc_matriz_sin = tasa_pc * r['matriz']['ingresos']
+            saldo_matriz_sin = impuesto_sin_estructura - pc_matriz_sin
+
+            # Con estructura: pago a cuenta de la matriz sobre ingresos menos compras internas
+            ingresos_matriz_con = r['matriz']['ingresos']
+            pc_matriz_con = tasa_pc * ingresos_matriz_con
+            saldo_matriz_con = impuesto_matriz_con - pc_matriz_con
+
+            # Pagos a cuenta de satelites
+            total_pc_satelites = sum(rpc['pago_cuenta_actual'] for rpc in resultados_pc)
+            total_ir_satelites = sum(rpc['ir_actual'] for rpc in resultados_pc)
+            total_saldo_satelites = sum(rpc['saldo_actual'] for rpc in resultados_pc)
+
+            # Consolidado grupo con estructura
+            pc_grupo_con = pc_matriz_con + total_pc_satelites
+            ir_grupo_con = impuesto_con_estructura
+            saldo_grupo_con = ir_grupo_con - pc_grupo_con
+
+            # Ahorro en regularizacion: diferencia de saldos
+            ahorro_tributario = impuesto_sin_estructura - impuesto_con_estructura
+            tasa_efectiva_sin = (impuesto_sin_estructura / utilidad_sin_estructura * 100) if utilidad_sin_estructura > 0 else 0
+            utilidad_total_con = r['matriz']['nueva_utilidad'] + r['grupo']['total_utilidad_satelites']
+            tasa_efectiva_con = (impuesto_con_estructura / utilidad_total_con * 100) if utilidad_total_con > 0 else 0
+
+            # Eficiencia de pagos a cuenta global
+            eficiencia_sin = (impuesto_sin_estructura / pc_matriz_sin * 100) if pc_matriz_sin > 0 else 0
+            eficiencia_con = (ir_grupo_con / pc_grupo_con * 100) if pc_grupo_con > 0 else 0
+
+            # Punto de equilibrio financiero global:
+            # Margen promedio ponderado donde IR_total = PaC_total
+            costo_total_satelites = sum(rpc['costo'] for rpc in resultados_pc)
+            gastos_total_satelites = sum(rpc['gastos'] for rpc in resultados_pc)
+
             self.datos_pagos_cuenta = {
                 'tasa_pago_cuenta': tasa_pc * 100,
                 'satelites': resultados_pc,
-                'total_pagos_cuenta': sum(r['pago_cuenta_actual'] for r in resultados_pc),
-                'total_ir': sum(r['ir_actual'] for r in resultados_pc),
-                'total_saldo': sum(r['saldo_actual'] for r in resultados_pc),
+                'total_pagos_cuenta': total_pc_satelites,
+                'total_ir': total_ir_satelites,
+                'total_saldo': total_saldo_satelites,
+                # Datos globales
+                'global': {
+                    'impuesto_sin_estructura': impuesto_sin_estructura,
+                    'utilidad_sin_estructura': utilidad_sin_estructura,
+                    'pc_matriz_sin': pc_matriz_sin,
+                    'saldo_matriz_sin': saldo_matriz_sin,
+                    'tasa_efectiva_sin': tasa_efectiva_sin,
+                    'eficiencia_sin': eficiencia_sin,
+                    'impuesto_matriz_con': impuesto_matriz_con,
+                    'impuesto_satelites': impuesto_satelites,
+                    'impuesto_con_estructura': impuesto_con_estructura,
+                    'utilidad_total_con': utilidad_total_con,
+                    'pc_matriz_con': pc_matriz_con,
+                    'saldo_matriz_con': saldo_matriz_con,
+                    'pc_satelites': total_pc_satelites,
+                    'pc_grupo_con': pc_grupo_con,
+                    'ir_grupo_con': ir_grupo_con,
+                    'saldo_grupo_con': saldo_grupo_con,
+                    'tasa_efectiva_con': tasa_efectiva_con,
+                    'eficiencia_con': eficiencia_con,
+                    'ahorro_tributario': ahorro_tributario,
+                    'ahorro_porcentual': r['grupo']['ahorro_porcentual'],
+                    'ingresos_matriz': r['matriz']['ingresos'],
+                    'nombre_matriz': r['matriz']['nombre'],
+                    'costo_total_satelites': costo_total_satelites,
+                    'gastos_total_satelites': gastos_total_satelites,
+                },
             }
 
             self._mostrar_resultados_pagos_cuenta()
@@ -1637,10 +1709,11 @@ permitido en el régimen especial, maximizando el ahorro tributario.
         """Muestra resultados del analisis de pagos a cuenta en la pestana."""
         self.text_pagos_cuenta.delete(1.0, tk.END)
         d = self.datos_pagos_cuenta
+        g = d['global']
 
         texto = f"""{'='*140}
   ANALISIS DE PAGOS A CUENTA Y PUNTO DE EQUILIBRIO FISCAL - TEORIA DE JUEGOS
-  Tasa Pago a Cuenta: {d['tasa_pago_cuenta']:.1f}%
+  Tasa Pago a Cuenta: {d['tasa_pago_cuenta']:.1f}%  |  Grupo: {g['nombre_matriz']}
 {'='*140}
 
   LOGICA: El pago a cuenta del {d['tasa_pago_cuenta']:.1f}% es un adelanto obligatorio del IR. El margen optimo debe equilibrar:
@@ -1650,29 +1723,86 @@ permitido en el régimen especial, maximizando el ahorro tributario.
   EQUILIBRIO DE NASH: El margen donde IR_anual = Pagos_a_Cuenta es el punto de equilibrio fiscal.
     Formula: m_eq = (t_pc * C + t_esp * G) / (C * (t_esp - t_pc))
 
+  PUNTO DE EQUILIBRIO FINANCIERO: El punto donde los pagos a cuenta adelantados al fisco
+    igualan exactamente al impuesto definitivo, eliminando tanto el costo financiero del
+    dinero inmovilizado (saldo a favor) como la necesidad de liquidez para regularizacion (saldo por pagar).
+
 {'='*140}
-  RESUMEN CONSOLIDADO
+  I. IMPUESTO GLOBAL SIN ESTRUCTURA SATELITAL
 {'='*140}
-  Total Pagos a Cuenta:           {d['total_pagos_cuenta']:>15,.2f}
-  Total IR Satelites:             {d['total_ir']:>15,.2f}
-  Saldo Regularizacion Total:     {d['total_saldo']:>15,.2f}  {'(SALDO A FAVOR)' if d['total_saldo'] < 0 else '(SALDO POR PAGAR)'}
+  Empresa:                        {g['nombre_matriz']}
+  Ingresos Totales:               {g['ingresos_matriz']:>15,.2f}
+  Utilidad Gravable:              {g['utilidad_sin_estructura']:>15,.2f}
+  Tasa Aplicable:                 {'29.5% (Regimen General)':>30}
+  Impuesto a la Renta:            {g['impuesto_sin_estructura']:>15,.2f}
+  {'-'*70}
+  Pagos a Cuenta ({d['tasa_pago_cuenta']:.1f}%):        {g['pc_matriz_sin']:>15,.2f}
+  Saldo Regularizacion:           {g['saldo_matriz_sin']:>15,.2f}  {'(SALDO A FAVOR)' if g['saldo_matriz_sin'] < 0 else '(SALDO POR PAGAR)'}
+  Eficiencia PaC:                 {g['eficiencia_sin']:>10.1f}%  (ideal=100%)
+  Tasa Efectiva:                  {g['tasa_efectiva_sin']:>10.1f}%
+
+{'='*140}
+  II. IMPUESTO GLOBAL CON ESTRUCTURA SATELITAL (ENFOQUE EQUILIBRIO FINANCIERO)
+{'='*140}
+  A) EMPRESA MATRIZ (con compras a satelites)
+  {'-'*70}
+  Impuesto Matriz:                {g['impuesto_matriz_con']:>15,.2f}
+  Pagos a Cuenta Matriz:          {g['pc_matriz_con']:>15,.2f}
+  Saldo Matriz:                   {g['saldo_matriz_con']:>15,.2f}  {'(FAVOR)' if g['saldo_matriz_con'] < 0 else '(PAGAR)'}
+
+  B) EMPRESAS SATELITES (consolidado)
+  {'-'*70}
+  Impuesto Satelites:             {g['impuesto_satelites']:>15,.2f}
+  Pagos a Cuenta Satelites:       {g['pc_satelites']:>15,.2f}
+  Saldo Satelites:                {d['total_saldo']:>15,.2f}  {'(FAVOR)' if d['total_saldo'] < 0 else '(PAGAR)'}
+
+  C) GRUPO CONSOLIDADO
+  {'-'*70}
+  Impuesto Total Grupo:           {g['impuesto_con_estructura']:>15,.2f}
+  Pagos a Cuenta Total Grupo:     {g['pc_grupo_con']:>15,.2f}
+  Saldo Regularizacion Grupo:     {g['saldo_grupo_con']:>15,.2f}  {'(FAVOR)' if g['saldo_grupo_con'] < 0 else '(PAGAR)'}
+  Eficiencia PaC Grupo:           {g['eficiencia_con']:>10.1f}%  (ideal=100%)
+  Tasa Efectiva Grupo:            {g['tasa_efectiva_con']:>10.1f}%
+
+{'='*140}
+  III. COMPARATIVO DE EQUILIBRIO FINANCIERO
+{'='*140}
+  {'Concepto':<40} | {'SIN Estructura':>18} | {'CON Estructura':>18} | {'Diferencia':>18}
+  {'-'*100}
+  {'Impuesto a la Renta':<40} | {g['impuesto_sin_estructura']:>18,.2f} | {g['impuesto_con_estructura']:>18,.2f} | {g['impuesto_con_estructura'] - g['impuesto_sin_estructura']:>18,.2f}
+  {'Pagos a Cuenta Totales':<40} | {g['pc_matriz_sin']:>18,.2f} | {g['pc_grupo_con']:>18,.2f} | {g['pc_grupo_con'] - g['pc_matriz_sin']:>18,.2f}
+  {'Saldo Regularizacion':<40} | {g['saldo_matriz_sin']:>18,.2f} | {g['saldo_grupo_con']:>18,.2f} | {g['saldo_grupo_con'] - g['saldo_matriz_sin']:>18,.2f}
+  {'Eficiencia PaC (%)':<40} | {g['eficiencia_sin']:>17.1f}% | {g['eficiencia_con']:>17.1f}% | {g['eficiencia_con'] - g['eficiencia_sin']:>17.1f}%
+  {'Tasa Efectiva (%)':<40} | {g['tasa_efectiva_sin']:>17.1f}% | {g['tasa_efectiva_con']:>17.1f}% | {g['tasa_efectiva_con'] - g['tasa_efectiva_sin']:>17.1f}%
+  {'-'*100}
+  {'AHORRO TRIBUTARIO NETO':<40} | {'':>18} | {'':>18} | {g['ahorro_tributario']:>18,.2f}
+  {'AHORRO PORCENTUAL':<40} | {'':>18} | {'':>18} | {g['ahorro_porcentual']:>17.1f}%
+  {'='*100}
+
+{'='*140}
+  IV. RESUMEN PAGOS A CUENTA POR SATELITE
+{'='*140}
 """
 
         for i, sat in enumerate(d['satelites'], 1):
+            eq_str = f"{sat['margen_equilibrio']:.4f}%" if sat['margen_equilibrio'] is not None else "N/A (Regimen General)"
             texto += f"""
-{'='*140}
-  {i}. {sat['nombre']} | Costo: {sat['costo']:,.0f} | Gastos: {sat['gastos']:,.0f}
-{'='*140}
+  {'-'*140}
+  {i}. {sat['nombre']} | Costo: {sat['costo']:,.0f} | Gastos: {sat['gastos']:,.0f} | {'Reg. General' if sat['es_general'] else 'Reg. Especial/MYPE'}
+  {'-'*140}
   Margen Optimo (regimen):        {sat['margen_optimo_regimen']:>10.4f}%
-  Margen Equilibrio (IR=PaC):     {sat['margen_equilibrio']:>10.4f}%  {'' if sat['margen_equilibrio'] is not None else 'N/A'}
+  Margen Equilibrio (IR=PaC):     {eq_str:>20}
   Pago a Cuenta Anual:            {sat['pago_cuenta_actual']:>15,.2f}
   IR Anual:                       {sat['ir_actual']:>15,.2f}
-  Saldo Regularizacion:           {sat['saldo_actual']:>15,.2f}  {'(FAVOR)' if sat['saldo_actual'] < 0 else '(PAGAR)'}
+  Saldo Regularizacion:           {sat['saldo_actual']:>15,.2f}  {'(FAVOR - dinero inmovilizado en SUNAT)' if sat['saldo_actual'] < 0 else '(POR PAGAR en regularizacion)'}
   Eficiencia Pago a Cuenta:       {sat['eficiencia_pc']:>10.1f}%  (ideal=100%)
 """
             # Tabla de sensibilidad
             texto += f"""
   {'CUADRO DE SENSIBILIDAD - Variacion del Margen':^140}
+  Que significa: Al variar el margen del satelite, se observa como cambian el IR, los pagos a cuenta
+  y el saldo de regularizacion. El punto OPTIMO maximiza el ahorro fiscal; el punto EQUILIBRIO
+  es donde IR = Pago a Cuenta (saldo cero, maxima eficiencia financiera).
   {'-'*140}
   {'Margen%':>8} | {'Precio Venta':>14} | {'Util. Neta':>12} | {'Regimen':>10} | {'IR':>12} | {'Pago Cta':>12} | {'Saldo':>12} | {'Ahorro Reg':>12} | {'Efic%':>7} | {'Nota':>12}
   {'-'*140}
@@ -1688,6 +1818,8 @@ permitido en el régimen especial, maximizando el ahorro tributario.
             # Tabla sensibilidad 2D (tasa pago a cuenta)
             texto += f"""
   {'SENSIBILIDAD BIDIMENSIONAL - Tasa de Pago a Cuenta al Margen Optimo':^140}
+  Que significa: Muestra como cambia el saldo de regularizacion si SUNAT modificara la tasa
+  de pago a cuenta. Permite anticipar el impacto financiero ante cambios regulatorios.
   {'-'*80}
   {'Tasa PaC%':>10} | {'Pago Cuenta':>14} | {'IR':>12} | {'Saldo':>14} | {'Eficiencia%':>12}
   {'-'*80}
@@ -1697,14 +1829,32 @@ permitido en el régimen especial, maximizando el ahorro tributario.
 
         texto += f"""
 {'='*140}
-  INTERPRETACION ESTRATEGICA (TEORIA DE JUEGOS):
+  V. INTERPRETACION ESTRATEGICA (TEORIA DE JUEGOS Y EQUILIBRIO FINANCIERO):
 {'='*140}
-  - Si Margen Optimo < Margen Equilibrio: El satelite genera SALDO A FAVOR (exceso de pagos a cuenta).
-    El costo de capital del saldo a favor es el costo de oportunidad del dinero inmovilizado.
-    Cuanto mayor el costo vs el limite, mayor el saldo a favor relativo.
 
-  - Si Margen Optimo > Margen Equilibrio: El satelite tiene saldo POR PAGAR en regularizacion.
-    Los pagos a cuenta se consumen completamente. Situacion financieramente eficiente.
+  CONCEPTO CLAVE - PUNTO DE EQUILIBRIO FINANCIERO:
+  El punto de equilibrio financiero es aquel donde los pagos a cuenta adelantados (1.5% de ingresos
+  mensuales) igualan exactamente al Impuesto a la Renta anual definitivo. En este punto:
+    - No hay dinero inmovilizado en SUNAT (saldo a favor = 0)
+    - No hay necesidad de liquidez adicional para regularizacion (saldo por pagar = 0)
+    - El flujo de caja se optimiza al maximo
+
+  ANALISIS POR ESCENARIO:
+
+  - SIN ESTRUCTURA: La empresa {g['nombre_matriz']} paga IR de {g['impuesto_sin_estructura']:,.0f} al 29.5%.
+    Sus pagos a cuenta suman {g['pc_matriz_sin']:,.0f}. Eficiencia: {g['eficiencia_sin']:.1f}%.
+    {'El exceso de pagos a cuenta de ' + f"{abs(g['saldo_matriz_sin']):,.0f}" + ' queda inmovilizado en SUNAT.' if g['saldo_matriz_sin'] < 0 else 'Debe regularizar ' + f"{g['saldo_matriz_sin']:,.0f}" + ' adicionales.'}
+
+  - CON ESTRUCTURA: El grupo paga IR total de {g['impuesto_con_estructura']:,.0f} (tasa efectiva {g['tasa_efectiva_con']:.1f}%).
+    Los pagos a cuenta del grupo suman {g['pc_grupo_con']:,.0f}. Eficiencia: {g['eficiencia_con']:.1f}%.
+    {'El grupo tiene ' + f"{abs(g['saldo_grupo_con']):,.0f}" + ' inmovilizado en SUNAT como saldo a favor.' if g['saldo_grupo_con'] < 0 else 'El grupo debe regularizar ' + f"{g['saldo_grupo_con']:,.0f}" + ' adicionales.'}
+
+  INTERPRETACION POR SATELITE:
+  - Si Margen Optimo < Margen Equilibrio: Genera SALDO A FAVOR (exceso de pagos a cuenta).
+    Costo financiero: dinero inmovilizado en SUNAT que podria estar generando retorno.
+
+  - Si Margen Optimo > Margen Equilibrio: Tiene saldo POR PAGAR en regularizacion.
+    Situacion financieramente eficiente (los pagos a cuenta se consumen completamente).
 
   - EQUILIBRIO DE NASH: El grupo optimiza cuando cada satelite equilibra:
     Beneficio marginal del ahorro fiscal = Costo marginal del saldo a favor
@@ -1720,22 +1870,82 @@ permitido en el régimen especial, maximizando el ahorro tributario.
         self.text_pagos_cuenta.insert(1.0, texto)
 
     def _generar_graficos_pagos_cuenta(self):
-        """Genera graficos de analisis de pagos a cuenta."""
+        """Genera graficos de analisis de pagos a cuenta con panel global consolidado."""
         if self.canvas_pagos_cuenta:
             self.canvas_pagos_cuenta.get_tk_widget().destroy()
 
         d = self.datos_pagos_cuenta
+        g = d['global']
         n_sats = len(d['satelites'])
 
-        # Determinar layout de subplots
-        n_cols = min(2, n_sats)
-        n_rows = (n_sats + 1) // 2
+        # Layout: primera fila = 2 paneles globales, luego satelites
+        n_cols = 2
+        n_rows_sats = (n_sats + 1) // 2
+        n_rows = 1 + n_rows_sats  # 1 fila global + filas de satelites
 
         fig, axes = plt.subplots(n_rows, n_cols, figsize=(14, 5 * n_rows), squeeze=False)
-        fig.suptitle('Analisis Pagos a Cuenta vs IR por Satelite', fontsize=14, fontweight='bold')
+        fig.suptitle('ANALISIS DE EQUILIBRIO FINANCIERO - Pagos a Cuenta vs IR',
+                     fontsize=14, fontweight='bold', color='#1F4E79')
 
+        # --- PANEL GLOBAL 1: Comparativo Impuesto Sin vs Con Estructura ---
+        ax_g1 = axes[0][0]
+        categorias = ['IR\nAnual', 'Pagos a\nCuenta', 'Saldo\nRegulariz.']
+        vals_sin = [g['impuesto_sin_estructura'], g['pc_matriz_sin'], g['saldo_matriz_sin']]
+        vals_con = [g['impuesto_con_estructura'], g['pc_grupo_con'], g['saldo_grupo_con']]
+        x = np.arange(len(categorias))
+        width = 0.35
+        bars1 = ax_g1.bar(x - width/2, vals_sin, width, label='Sin Estructura', color='#E74C3C', alpha=0.85, edgecolor='white')
+        bars2 = ax_g1.bar(x + width/2, vals_con, width, label='Con Estructura', color='#2ECC71', alpha=0.85, edgecolor='white')
+        ax_g1.set_title('Impuesto Global: Sin vs Con Estructura', fontsize=11, fontweight='bold')
+        ax_g1.set_xticks(x)
+        ax_g1.set_xticklabels(categorias, fontsize=8)
+        ax_g1.legend(fontsize=8)
+        ax_g1.grid(True, alpha=0.3, axis='y')
+        ax_g1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1000:,.0f}K'))
+        # Etiquetas de valor
+        for bar in bars1:
+            h = bar.get_height()
+            ax_g1.text(bar.get_x() + bar.get_width()/2., h, f'{h/1000:,.0f}K',
+                      ha='center', va='bottom', fontsize=7, fontweight='bold', color='#C0392B')
+        for bar in bars2:
+            h = bar.get_height()
+            ax_g1.text(bar.get_x() + bar.get_width()/2., h, f'{h/1000:,.0f}K',
+                      ha='center', va='bottom', fontsize=7, fontweight='bold', color='#27AE60')
+        # Anotar ahorro
+        ax_g1.annotate(f'Ahorro: S/ {g["ahorro_tributario"]:,.0f}\n({g["ahorro_porcentual"]:.1f}%)',
+                       xy=(0.98, 0.95), xycoords='axes fraction', ha='right', va='top',
+                       fontsize=9, fontweight='bold', color='#006600',
+                       bbox=dict(boxstyle='round,pad=0.4', facecolor='#E8F8E8', edgecolor='#006600', alpha=0.9))
+
+        # --- PANEL GLOBAL 2: Eficiencia y Tasas Efectivas ---
+        ax_g2 = axes[0][1]
+        metricas = ['Tasa\nEfectiva', 'Eficiencia\nPaC']
+        vals_sin_pct = [g['tasa_efectiva_sin'], g['eficiencia_sin']]
+        vals_con_pct = [g['tasa_efectiva_con'], g['eficiencia_con']]
+        x2 = np.arange(len(metricas))
+        bars3 = ax_g2.bar(x2 - width/2, vals_sin_pct, width, label='Sin Estructura', color='#E74C3C', alpha=0.85, edgecolor='white')
+        bars4 = ax_g2.bar(x2 + width/2, vals_con_pct, width, label='Con Estructura', color='#2ECC71', alpha=0.85, edgecolor='white')
+        ax_g2.set_title('Eficiencia Financiera: Sin vs Con Estructura', fontsize=11, fontweight='bold')
+        ax_g2.set_xticks(x2)
+        ax_g2.set_xticklabels(metricas, fontsize=9)
+        ax_g2.set_ylabel('%', fontsize=10)
+        ax_g2.legend(fontsize=8)
+        ax_g2.grid(True, alpha=0.3, axis='y')
+        # Linea de referencia 100% eficiencia
+        ax_g2.axhline(y=100, color='blue', linestyle='--', alpha=0.4, linewidth=1)
+        ax_g2.text(1.35, 100, 'Efic. ideal=100%', fontsize=7, color='blue', alpha=0.6, va='center')
+        for bar in bars3:
+            h = bar.get_height()
+            ax_g2.text(bar.get_x() + bar.get_width()/2., h, f'{h:.1f}%',
+                      ha='center', va='bottom', fontsize=8, fontweight='bold', color='#C0392B')
+        for bar in bars4:
+            h = bar.get_height()
+            ax_g2.text(bar.get_x() + bar.get_width()/2., h, f'{h:.1f}%',
+                      ha='center', va='bottom', fontsize=8, fontweight='bold', color='#27AE60')
+
+        # --- PANELES POR SATELITE ---
         for idx, sat in enumerate(d['satelites']):
-            row = idx // n_cols
+            row = 1 + idx // n_cols
             col = idx % n_cols
             ax = axes[row][col]
 
@@ -1743,8 +1953,6 @@ permitido en el régimen especial, maximizando el ahorro tributario.
             margenes = [s['margen'] for s in sens]
             irs = [s['ir'] for s in sens]
             pacs = [s['pago_cuenta'] for s in sens]
-            saldos = [s['saldo'] for s in sens]
-            ahorros = [s['ahorro_regimen'] for s in sens]
 
             # Graficar IR y Pago a Cuenta
             ax.plot(margenes, irs, 'b-', linewidth=2, label='IR Anual', marker='o', markersize=3)
@@ -1771,8 +1979,8 @@ permitido en el régimen especial, maximizando el ahorro tributario.
             ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1000:.0f}K'))
 
         # Ocultar subplots vacios
-        for idx in range(n_sats, n_rows * n_cols):
-            row = idx // n_cols
+        for idx in range(n_sats, n_rows_sats * n_cols):
+            row = 1 + idx // n_cols
             col = idx % n_cols
             axes[row][col].set_visible(False)
 
@@ -2275,42 +2483,257 @@ permitido en el régimen especial, maximizando el ahorro tributario.
 
                 ws7.merge_cells('B2:K2')
                 c = ws7['B2']
-                c.value = "ANALISIS DE PAGOS A CUENTA Y EQUILIBRIO FISCAL"
+                c.value = "ANALISIS DE PAGOS A CUENTA Y EQUILIBRIO FINANCIERO"
                 self._aplicar_estilo(c, self._estilo_titulo())
                 ws7.row_dimensions[2].height = 30
 
                 if self.datos_pagos_cuenta:
                     dpc = self.datos_pagos_cuenta
+                    gpc = dpc['global']
 
-                    # Resumen consolidado
-                    ws7.merge_cells('B4:E4')
+                    # --- EXPLICACION GERENCIAL DEL CONCEPTO ---
+                    ws7.merge_cells('B4:K4')
                     c = ws7['B4']
-                    c.value = f"RESUMEN CONSOLIDADO (Tasa PaC: {dpc['tasa_pago_cuenta']:.1f}%)"
+                    c.value = "CONCEPTO: PUNTO DE EQUILIBRIO FINANCIERO"
                     self._aplicar_estilo(c, self._estilo_subtitulo())
 
-                    resumen_data = [
-                        ("Total Pagos a Cuenta", f"S/ {dpc['total_pagos_cuenta']:,.2f}"),
-                        ("Total IR Satelites", f"S/ {dpc['total_ir']:,.2f}"),
-                        ("Saldo Regularizacion", f"S/ {dpc['total_saldo']:,.2f}"),
-                        ("Tipo Saldo", "FAVOR" if dpc['total_saldo'] < 0 else "POR PAGAR"),
+                    ws7.merge_cells('B5:K5')
+                    c = ws7['B5']
+                    c.value = ("El punto de equilibrio financiero es aquel donde los pagos a cuenta mensuales (adelantos obligatorios del IR al "
+                              f"{dpc['tasa_pago_cuenta']:.1f}% de los ingresos) igualan exactamente al Impuesto a la Renta anual definitivo. "
+                              "En este punto no hay dinero inmovilizado en SUNAT (saldo a favor) ni necesidad de liquidez para "
+                              "regularizacion (saldo por pagar). La estrategia satelital busca optimizar este equilibrio en todo el grupo.")
+                    self._aplicar_estilo(c, {
+                        'font': Font(name='Calibri', italic=True, color='444444', size=10),
+                        'alignment': Alignment(horizontal='left', wrap_text=True)
+                    })
+                    ws7.row_dimensions[5].height = 50
+
+                    # --- SECCION I: ESCENARIO SIN ESTRUCTURA ---
+                    fila = 7
+                    ws7.merge_cells(f'B{fila}:F{fila}')
+                    c = ws7[f'B{fila}']
+                    c.value = f"I. ESCENARIO SIN ESTRUCTURA SATELITAL - {gpc['nombre_matriz']}"
+                    self._aplicar_estilo(c, self._estilo_subtitulo())
+                    fila += 1
+
+                    datos_sin_est = [
+                        ("Ingresos Totales", gpc['ingresos_matriz']),
+                        ("Utilidad Gravable", gpc['utilidad_sin_estructura']),
+                        ("Tasa Aplicable", "29.5% (Regimen General)"),
+                        ("Impuesto a la Renta", gpc['impuesto_sin_estructura']),
+                        (f"Pagos a Cuenta ({dpc['tasa_pago_cuenta']:.1f}%)", gpc['pc_matriz_sin']),
+                        ("Saldo Regularizacion", gpc['saldo_matriz_sin']),
+                        ("Eficiencia PaC", f"{gpc['eficiencia_sin']:.1f}%"),
+                        ("Tasa Efectiva", f"{gpc['tasa_efectiva_sin']:.1f}%"),
                     ]
-                    for i, (lab, val) in enumerate(resumen_data):
-                        c = ws7.cell(row=5 + i, column=2)
+                    for i, (lab, val) in enumerate(datos_sin_est):
+                        c = ws7.cell(row=fila + i, column=2)
                         c.value = lab
                         self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
                         c.alignment = Alignment(horizontal='left')
-                        c = ws7.cell(row=5 + i, column=3)
-                        c.value = val
+                        c = ws7.cell(row=fila + i, column=3)
+                        if isinstance(val, (int, float)):
+                            c.value = val
+                            c.number_format = '#,##0.00'
+                        else:
+                            c.value = val
                         self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
                         if lab == "Saldo Regularizacion":
-                            color = 'CC0000' if dpc['total_saldo'] < 0 else '006600'
-                            c.font = Font(name='Calibri', bold=True, color=color, size=10)
+                            color_s = 'CC0000' if gpc['saldo_matriz_sin'] < 0 else '006600'
+                            c.font = Font(name='Calibri', bold=True, color=color_s, size=10)
+                            # Agregar indicador
+                            c2 = ws7.cell(row=fila + i, column=4)
+                            c2.value = "(FAVOR)" if gpc['saldo_matriz_sin'] < 0 else "(POR PAGAR)"
+                            c2.font = Font(name='Calibri', bold=True, color=color_s, size=9)
+                        if lab == "Impuesto a la Renta":
+                            c.font = Font(name='Calibri', bold=True, color='CC0000', size=11)
 
-                    ws7.column_dimensions['B'].width = 24
+                    fila += len(datos_sin_est) + 1
+
+                    # --- SECCION II: ESCENARIO CON ESTRUCTURA ---
+                    ws7.merge_cells(f'B{fila}:F{fila}')
+                    c = ws7[f'B{fila}']
+                    c.value = "II. ESCENARIO CON ESTRUCTURA SATELITAL (GRUPO CONSOLIDADO)"
+                    self._aplicar_estilo(c, self._estilo_subtitulo())
+                    fila += 1
+
+                    datos_con_est = [
+                        ("Impuesto Matriz (con compras)", gpc['impuesto_matriz_con']),
+                        ("Pagos a Cuenta Matriz", gpc['pc_matriz_con']),
+                        ("Saldo Matriz", gpc['saldo_matriz_con']),
+                        ("Impuesto Satelites", gpc['impuesto_satelites']),
+                        ("Pagos a Cuenta Satelites", gpc['pc_satelites']),
+                        ("Saldo Satelites", dpc['total_saldo']),
+                        ("--- GRUPO CONSOLIDADO ---", ""),
+                        ("Impuesto Total Grupo", gpc['impuesto_con_estructura']),
+                        ("Pagos a Cuenta Total Grupo", gpc['pc_grupo_con']),
+                        ("Saldo Regularizacion Grupo", gpc['saldo_grupo_con']),
+                        ("Eficiencia PaC Grupo", f"{gpc['eficiencia_con']:.1f}%"),
+                        ("Tasa Efectiva Grupo", f"{gpc['tasa_efectiva_con']:.1f}%"),
+                    ]
+                    for i, (lab, val) in enumerate(datos_con_est):
+                        c = ws7.cell(row=fila + i, column=2)
+                        c.value = lab
+                        self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+                        c.alignment = Alignment(horizontal='left')
+                        if lab.startswith("---"):
+                            c.font = Font(name='Calibri', bold=True, color='1F4E79', size=10)
+                        c = ws7.cell(row=fila + i, column=3)
+                        if isinstance(val, (int, float)):
+                            c.value = val
+                            c.number_format = '#,##0.00'
+                        else:
+                            c.value = val
+                        self._aplicar_estilo(c, self._estilo_celda(i % 2 == 0))
+                        if "Saldo" in lab and isinstance(val, (int, float)):
+                            color_s = 'CC0000' if val < 0 else '006600'
+                            c.font = Font(name='Calibri', bold=True, color=color_s, size=10)
+                            c2 = ws7.cell(row=fila + i, column=4)
+                            c2.value = "(FAVOR)" if val < 0 else "(POR PAGAR)"
+                            c2.font = Font(name='Calibri', bold=True, color=color_s, size=9)
+                        if lab == "Impuesto Total Grupo":
+                            c.font = Font(name='Calibri', bold=True, color='006600', size=11)
+
+                    fila += len(datos_con_est) + 1
+
+                    # --- SECCION III: TABLA COMPARATIVA ---
+                    ws7.merge_cells(f'B{fila}:G{fila}')
+                    c = ws7[f'B{fila}']
+                    c.value = "III. COMPARATIVO DE EQUILIBRIO FINANCIERO"
+                    self._aplicar_estilo(c, self._estilo_subtitulo())
+                    fila += 1
+
+                    headers_comp_eq = ["Concepto", "Sin Estructura", "Con Estructura", "Diferencia", "Beneficio"]
+                    for j, h in enumerate(headers_comp_eq, 2):
+                        c = ws7.cell(row=fila, column=j)
+                        c.value = h
+                        self._aplicar_estilo(c, self._estilo_header())
+                    ws7.row_dimensions[fila].height = 28
+                    fila += 1
+
+                    diff_ir = gpc['impuesto_con_estructura'] - gpc['impuesto_sin_estructura']
+                    diff_pc = gpc['pc_grupo_con'] - gpc['pc_matriz_sin']
+                    diff_saldo = gpc['saldo_grupo_con'] - gpc['saldo_matriz_sin']
+                    diff_efic = gpc['eficiencia_con'] - gpc['eficiencia_sin']
+                    diff_tasa = gpc['tasa_efectiva_con'] - gpc['tasa_efectiva_sin']
+
+                    filas_comp = [
+                        ("Impuesto a la Renta", gpc['impuesto_sin_estructura'], gpc['impuesto_con_estructura'], diff_ir,
+                         "AHORRO" if diff_ir < 0 else "MAYOR CARGA"),
+                        ("Pagos a Cuenta Totales", gpc['pc_matriz_sin'], gpc['pc_grupo_con'], diff_pc,
+                         "Menor flujo" if diff_pc < 0 else "Mayor flujo"),
+                        ("Saldo Regularizacion", gpc['saldo_matriz_sin'], gpc['saldo_grupo_con'], diff_saldo,
+                         "Mejor equilibrio" if abs(gpc['saldo_grupo_con']) < abs(gpc['saldo_matriz_sin']) else "Revisar"),
+                    ]
+                    for i, (concepto, v_sin, v_con, diff, benef) in enumerate(filas_comp):
+                        alt = i % 2 == 0
+                        c = ws7.cell(row=fila, column=2)
+                        c.value = concepto
+                        self._aplicar_estilo(c, self._estilo_celda(alt))
+                        c.alignment = Alignment(horizontal='left')
+                        for j, val in enumerate([v_sin, v_con, diff], 3):
+                            c = ws7.cell(row=fila, column=j)
+                            c.value = val
+                            c.number_format = '#,##0.00'
+                            self._aplicar_estilo(c, self._estilo_celda(alt))
+                            if j == 5 and val < 0:
+                                c.font = Font(name='Calibri', bold=True, color='006600', size=10)
+                        c = ws7.cell(row=fila, column=6)
+                        c.value = benef
+                        self._aplicar_estilo(c, self._estilo_celda(alt))
+                        if "AHORRO" in benef:
+                            c.font = Font(name='Calibri', bold=True, color='006600', size=10)
+                        fila += 1
+
+                    # Fila de eficiencia y tasa efectiva
+                    for i, (concepto, v_sin, v_con, diff) in enumerate([
+                        ("Eficiencia PaC (%)", gpc['eficiencia_sin'], gpc['eficiencia_con'], diff_efic),
+                        ("Tasa Efectiva (%)", gpc['tasa_efectiva_sin'], gpc['tasa_efectiva_con'], diff_tasa),
+                    ]):
+                        alt = (len(filas_comp) + i) % 2 == 0
+                        c = ws7.cell(row=fila, column=2)
+                        c.value = concepto
+                        self._aplicar_estilo(c, self._estilo_celda(alt))
+                        c.alignment = Alignment(horizontal='left')
+                        for j, val in enumerate([v_sin, v_con, diff], 3):
+                            c = ws7.cell(row=fila, column=j)
+                            c.value = val
+                            c.number_format = '0.0"%"'
+                            self._aplicar_estilo(c, self._estilo_celda(alt))
+                        c = ws7.cell(row=fila, column=6)
+                        c.value = "MEJOR" if diff < 0 else "MAYOR"
+                        self._aplicar_estilo(c, self._estilo_celda(alt))
+                        if diff < 0:
+                            c.font = Font(name='Calibri', bold=True, color='006600', size=10)
+                        fila += 1
+
+                    # KPI de ahorro neto
+                    fila += 1
+                    ws7.merge_cells(f'B{fila}:C{fila}')
+                    c = ws7[f'B{fila}']
+                    c.value = "AHORRO TRIBUTARIO NETO"
+                    self._aplicar_estilo(c, self._estilo_kpi_label())
+                    c = ws7.cell(row=fila, column=4)
+                    c.value = f"S/ {gpc['ahorro_tributario']:,.0f} ({gpc['ahorro_porcentual']:.1f}%)"
+                    self._aplicar_estilo(c, self._estilo_kpi_valor())
+                    ws7.merge_cells(start_row=fila, start_column=4, end_row=fila, end_column=5)
+                    ws7.row_dimensions[fila].height = 35
+
+                    fila += 2
+
+                    # --- SECCION IV: INTERPRETACION GERENCIAL ---
+                    ws7.merge_cells(f'B{fila}:K{fila}')
+                    c = ws7[f'B{fila}']
+                    c.value = "IV. INTERPRETACION GERENCIAL"
+                    self._aplicar_estilo(c, self._estilo_subtitulo())
+                    fila += 1
+
+                    interp_lines = [
+                        f"La estructura satelital reduce el impuesto de S/ {gpc['impuesto_sin_estructura']:,.0f} a S/ {gpc['impuesto_con_estructura']:,.0f}, "
+                        f"un ahorro de S/ {gpc['ahorro_tributario']:,.0f} ({gpc['ahorro_porcentual']:.1f}%).",
+
+                        f"La tasa efectiva baja de {gpc['tasa_efectiva_sin']:.1f}% a {gpc['tasa_efectiva_con']:.1f}% al distribuir "
+                        f"utilidades entre empresas que tributan en regimen especial (10%) en lugar del general (29.5%).",
+
+                        f"Los pagos a cuenta pasan de S/ {gpc['pc_matriz_sin']:,.0f} (solo matriz) a S/ {gpc['pc_grupo_con']:,.0f} (grupo). "
+                        + (f"El saldo a favor del grupo es S/ {abs(gpc['saldo_grupo_con']):,.0f}, dinero inmovilizado en SUNAT."
+                           if gpc['saldo_grupo_con'] < 0
+                           else f"El grupo debe regularizar S/ {gpc['saldo_grupo_con']:,.0f} adicionales."),
+
+                        f"La eficiencia de pagos a cuenta {'mejora' if gpc['eficiencia_con'] > gpc['eficiencia_sin'] else 'cambia'} "
+                        f"de {gpc['eficiencia_sin']:.1f}% a {gpc['eficiencia_con']:.1f}% (100% = equilibrio perfecto donde IR = Pagos a Cuenta).",
+
+                        "CONCLUSION: La estrategia satelital no solo reduce la carga tributaria sino que permite gestionar "
+                        "el flujo de caja de pagos a cuenta de forma mas eficiente al distribuir ingresos entre multiples entidades."
+                    ]
+                    for line in interp_lines:
+                        ws7.merge_cells(f'B{fila}:K{fila}')
+                        c = ws7[f'B{fila}']
+                        c.value = line
+                        c.font = Font(name='Calibri', size=10, color='333333')
+                        c.alignment = Alignment(horizontal='left', wrap_text=True)
+                        ws7.row_dimensions[fila].height = 35
+                        fila += 1
+                    # Ultima linea en bold
+                    ws7[f'B{fila - 1}'].font = Font(name='Calibri', size=10, color='1F4E79', bold=True)
+
+                    fila += 1
+
+                    ws7.column_dimensions['B'].width = 30
                     ws7.column_dimensions['C'].width = 22
+                    ws7.column_dimensions['D'].width = 22
+                    ws7.column_dimensions['E'].width = 22
+                    ws7.column_dimensions['F'].width = 18
 
-                    # Detalle por satelite
-                    fila_base = 10
+                    # --- SECCION V: DETALLE POR SATELITE ---
+                    ws7.merge_cells(f'B{fila}:K{fila}')
+                    c = ws7[f'B{fila}']
+                    c.value = "V. DETALLE PAGOS A CUENTA POR SATELITE"
+                    self._aplicar_estilo(c, self._estilo_subtitulo())
+                    fila += 1
+
+                    fila_base = fila
                     for idx_sat, sat_pc in enumerate(dpc['satelites']):
                         ws7.merge_cells(f'B{fila_base}:K{fila_base}')
                         c = ws7[f'B{fila_base}']
@@ -2630,7 +3053,7 @@ permitido en el régimen especial, maximizando el ahorro tributario.
                 f"  4. Simulacion Monte Carlo{'  [OK]' if img_simulacion else '  [Pendiente]'}\n"
                 f"  5. Sensibilidad{'  [OK]' if img_sensibilidad else '  [Pendiente]'}\n"
                 f"  6. Comparativo{'  [OK]' if img_comparativo else '  [Pendiente]'}\n"
-                f"  7. Pagos a Cuenta{'  [OK]' if self.datos_pagos_cuenta else '  [Pendiente]'}\n"
+                f"  7. Pagos a Cuenta y Equilibrio Financiero{'  [OK]' if self.datos_pagos_cuenta else '  [Pendiente]'}\n"
                 f"  8. Sensibilidad Margenes\n"
                 f"  9. Parametros\n\n"
                 f"Archivo: {path}"
